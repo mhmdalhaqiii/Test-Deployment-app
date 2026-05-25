@@ -23,15 +23,6 @@ use App\Http\Controllers\Api\PenggunaController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::middleware('auth:sanctum')->post('/logout', [AuthController::class, 'logout']);
 
-/*
-|--------------------------------------------------------------------------
-| IMPORT (ADMIN ONLY)
-|--------------------------------------------------------------------------
-*/
-    Route::post('/import/pelanggan', [ImportController::class, 'pelanggan']);
-    Route::post('/import/aset', [ImportController::class, 'aset']);
-    Route::post('/import/tiket', [ImportController::class, 'tiket']);
-
 
 /*
 |--------------------------------------------------------------------------
@@ -59,6 +50,10 @@ Route::middleware(['auth:sanctum', 'role:admin'])->group(function () {
     Route::put('/admin/pekerjaan-review/{id}', [PekerjaanPemeliharaanController::class, 'adminReviewUpdate']);
 
     Route::post('/pekerjaan/{id}/review-selesai', [PekerjaanPemeliharaanController::class, 'reviewSelesai']);
+
+    Route::post('/import/pelanggan', [ImportController::class, 'pelanggan']);
+    Route::post('/import/aset', [ImportController::class, 'aset']);
+    Route::post('/import/tiket', [ImportController::class, 'tiket']);
 });
 
 /*

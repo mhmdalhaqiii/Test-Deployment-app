@@ -691,7 +691,31 @@ export default function DashboardAdmin() {
                                     </Card.Body>
                                 </Card>
                             </Col>
+
+                            <Col xs={12} md={6} xl={3}>
+                                <Card className="border-0 bg-light rounded-4 h-100">
+                                    <Card.Body className="p-3">
+                                        <div className="fs-3 mb-2">📥</div>
+
+                                        <h6 className="fw-bold mb-1">Import Excel</h6>
+
+                                        <p className="small text-muted mb-3">
+                                            Import data pelanggan, aset APP TR, dan tiket pekerjaan dari file Excel.
+                                        </p>
+
+                                        <Button
+                                            size="sm"
+                                            variant="outline-success"
+                                            className="rounded-pill fw-bold px-3"
+                                            onClick={() => navigate('/admin/import')}
+                                        >
+                                            Buka Import
+                                        </Button>
+                                    </Card.Body>
+                                </Card>
+                            </Col>
                         </Row>
+
                     </Card.Body>
                 </Card>
 
