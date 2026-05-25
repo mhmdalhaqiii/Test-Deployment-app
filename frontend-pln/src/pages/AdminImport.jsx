@@ -115,12 +115,8 @@ export default function AdminImport() {
             const formData = new FormData();
             formData.append('file', selectedFile);
 
-            await api.post(item.endpoint, formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data',
-                },
-            });
-
+            await api.post(item.endpoint, formData);
+            
             setModalNotif({
                 show: true,
                 title: 'Import Berhasil',
