@@ -16,6 +16,9 @@ class ImportController extends Controller
 {
   public function pelanggan(Request $request)
 {
+    set_time_limit(300);
+    ini_set('memory_limit', '512M');
+
     if (!$request->hasFile('file')) {
         return response()->json([
             'success' => false,
@@ -24,7 +27,7 @@ class ImportController extends Controller
     }
 
     $request->validate([
-        'file' => 'required|file|mimes:xlsx,xls,csv|max:20480',
+        'file' => 'required|file|mimes:xlsx,xls,csv|max:51200',
     ]);
 
     DB::beginTransaction();
@@ -35,11 +38,13 @@ class ImportController extends Controller
         $spreadsheet = IOFactory::load($file->getPathname());
         $rows = $spreadsheet->getActiveSheet()->toArray();
 
-        $sukses = 0;
+        $dataImport = [];
         $gagal = [];
 
         foreach ($rows as $i => $row) {
-            if ($i === 0) continue;
+            if ($i === 0) {
+                continue;
+            }
 
             $unitup = trim($row[0] ?? '');
             $idpel = trim($row[1] ?? '');
@@ -57,21 +62,33 @@ class ImportController extends Controller
                 continue;
             }
 
-            Pelanggan::updateOrCreate(
+            $dataImport[] = [
+                'unitup' => $unitup,
+                'idpel' => $idpel,
+                'nama_pelanggan' => $namaPelanggan,
+                'alamat_pelanggan' => $alamatPelanggan,
+                'tarif' => $tarif,
+                'daya' => is_numeric($daya) ? (int) $daya : 0,
+                'tikor' => $tikor !== '' ? $tikor : null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        foreach (array_chunk($dataImport, 300) as $chunk) {
+            Pelanggan::upsert(
+                $chunk,
+                ['idpel'],
                 [
-                    'idpel' => $idpel,
-                ],
-                [
-                    'unitup' => $unitup,
-                    'nama_pelanggan' => $namaPelanggan,
-                    'alamat_pelanggan' => $alamatPelanggan,
-                    'tarif' => $tarif,
-                    'daya' => is_numeric($daya) ? (int) $daya : 0,
-                    'tikor' => $tikor !== '' ? $tikor : null,
+                    'unitup',
+                    'nama_pelanggan',
+                    'alamat_pelanggan',
+                    'tarif',
+                    'daya',
+                    'tikor',
+                    'updated_at',
                 ]
             );
-
-            $sukses++;
         }
 
         DB::commit();
@@ -79,7 +96,7 @@ class ImportController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Import pelanggan selesai',
-            'sukses' => $sukses,
+            'sukses' => count($dataImport),
             'gagal' => $gagal,
         ]);
     } catch (\Throwable $e) {
@@ -89,10 +106,10 @@ class ImportController extends Controller
             'success' => false,
             'message' => 'Import pelanggan gagal',
             'error' => $e->getMessage(),
+            'line' => $e->getLine(),
         ], 500);
     }
 }
-
 public function aset(Request $request)
 {
     if (!$request->hasFile('file')) {
