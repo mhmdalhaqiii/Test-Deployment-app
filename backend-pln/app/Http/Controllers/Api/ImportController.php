@@ -14,33 +14,83 @@ use Illuminate\Support\Facades\DB;
 
 class ImportController extends Controller
 {
-    public function pelanggan(Request $request)
+  public function pelanggan(Request $request)
 {
-    $file = $request->file('file');
-
-    $spreadsheet = IOFactory::load(
-        $file->getPathname()
-    );
-
-    $rows = $spreadsheet->getActiveSheet()->toArray();
-
-    foreach ($rows as $i => $row) {
-        if ($i === 0) continue;
-
-        Pelanggan::create([
-            'unitup'           => trim($row[0]),
-            'idpel'            => (string) trim($row[1]),
-            'nama_pelanggan'   => trim($row[2]),
-            'alamat_pelanggan' => trim($row[3]),
-            'tarif'            => trim($row[4]),
-            'daya'             => (int) $row[5],
-            'tikor'            => !empty($row[6]) ? trim($row[6]) : null,
-        ]);
+    if (!$request->hasFile('file')) {
+        return response()->json([
+            'success' => false,
+            'message' => 'File tidak ditemukan. Pastikan key upload adalah file.'
+        ], 422);
     }
 
-    return response()->json([
-        'message' => 'IMPORT BERHASIL'
+    $request->validate([
+        'file' => 'required|file|mimes:xlsx,xls,csv|max:20480',
     ]);
+
+    DB::beginTransaction();
+
+    try {
+        $file = $request->file('file');
+
+        $spreadsheet = IOFactory::load($file->getPathname());
+        $rows = $spreadsheet->getActiveSheet()->toArray();
+
+        $sukses = 0;
+        $gagal = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 0) continue;
+
+            $unitup = trim($row[0] ?? '');
+            $idpel = trim($row[1] ?? '');
+            $namaPelanggan = trim($row[2] ?? '');
+            $alamatPelanggan = trim($row[3] ?? '');
+            $tarif = trim($row[4] ?? '');
+            $daya = $row[5] ?? null;
+            $tikor = trim($row[6] ?? '');
+
+            if ($idpel === '') {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'alasan' => 'IDPEL kosong',
+                ];
+                continue;
+            }
+
+            Pelanggan::updateOrCreate(
+                [
+                    'idpel' => $idpel,
+                ],
+                [
+                    'unitup' => $unitup,
+                    'nama_pelanggan' => $namaPelanggan,
+                    'alamat_pelanggan' => $alamatPelanggan,
+                    'tarif' => $tarif,
+                    'daya' => is_numeric($daya) ? (int) $daya : 0,
+                    'tikor' => $tikor !== '' ? $tikor : null,
+                ]
+            );
+
+            $sukses++;
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Import pelanggan selesai',
+            'sukses' => $sukses,
+            'gagal' => $gagal,
+        ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Import pelanggan gagal',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
 }
 
 public function aset(Request $request)
