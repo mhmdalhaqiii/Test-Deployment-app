@@ -65,6 +65,8 @@ Route::middleware(['auth:sanctum', 'role:petugas'])->group(function () {
     Route::get('/tiket', [TiketPekerjaanController::class, 'index']);
     Route::get('/tiket-aktif-saya', [TiketPekerjaanController::class, 'pekerjaanAktif']);
 
+    Route::get('/maps/aset-petugas', [AsetAppTrController::class, 'mapsPetugas']);
+
     Route::post('/tiket/ambil-pekerjaan', [TiketPekerjaanController::class, 'ambilPekerjaan']);
     Route::post('/tiket/{id}/mulai', [TiketPekerjaanController::class, 'mulaiDikerjakan']);
     Route::get('/riwayat-pekerjaan-saya', [TiketPekerjaanController::class, 'riwayatPekerjaan']);
@@ -75,10 +77,7 @@ Route::middleware(['auth:sanctum', 'role:petugas'])->group(function () {
     Route::post('/pekerjaan/draft', [PekerjaanPemeliharaanController::class, 'draft']);
 
     Route::post('/foto-pekerjaan/upload', [FotoPekerjaanController::class, 'upload']);
-
     Route::post('/pekerjaan/{id}/kirim-review', [PekerjaanPemeliharaanController::class, 'kirimReview']);
-
-
     Route::post('/tiket/{id}/batal', [TiketPekerjaanController::class, 'batalDikerjakan']);
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Spinner, Button, Modal, Offcanvas, Alert } from 'react-bootstrap';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
@@ -48,6 +48,36 @@ function ChangeMapView({ coords }) {
     return null;
 }
 
+function MapTracker({ onChange }) {
+    const map = useMap();
+
+    useEffect(() => {
+        const updateMapState = () => {
+            const bounds = map.getBounds();
+
+            onChange({
+                zoom: map.getZoom(),
+                bounds: {
+                    minLat: bounds.getSouth(),
+                    maxLat: bounds.getNorth(),
+                    minLng: bounds.getWest(),
+                    maxLng: bounds.getEast(),
+                },
+            });
+        };
+
+        updateMapState();
+
+        map.on('zoomend moveend', updateMapState);
+
+        return () => {
+            map.off('zoomend moveend', updateMapState);
+        };
+    }, [map, onChange]);
+
+    return null;
+}
+
 export default function DashboardPetugas() {
     const navigate = useNavigate();
 
@@ -81,17 +111,38 @@ export default function DashboardPetugas() {
     // Default Center UP3 Palembang
     const defaultCenter = [-2.9909, 104.7566];
     const [lokasiTarget, setLokasiTarget] = useState(defaultCenter);
+    const [mapZoom, setMapZoom] = useState(13);
+    const [mapBounds, setMapBounds] = useState(null);
 
-    const fetchSemuaAset = async () => {
+    const MIN_ZOOM_MARKER = 14;
+
+    const fetchAsetMap = useCallback(async (bounds, zoom) => {
+        if (!bounds || zoom < MIN_ZOOM_MARKER) {
+            setSemuaAset([]);
+            setLoadingAset(false);
+            return;
+        }
+
         try {
-            const response = await api.get('/aset');
-            setSemuaAset(response.data.data || response.data);
+            setLoadingAset(true);
+
+            const response = await api.get('/maps/aset-petugas', {
+                params: {
+                    minLat: bounds.minLat,
+                    maxLat: bounds.maxLat,
+                    minLng: bounds.minLng,
+                    maxLng: bounds.maxLng,
+                    limit: 200,
+                },
+            });
+
+            setSemuaAset(response.data.data || []);
         } catch (error) {
-            console.error("Gagal memuat data aset keseluruhan", error);
+            console.error('Gagal memuat aset map:', error.response?.data || error);
         } finally {
             setLoadingAset(false);
         }
-    };
+    }, []);
 
     const fetchPekerjaanAktif = async () => {
         try {
@@ -118,9 +169,7 @@ export default function DashboardPetugas() {
     };
 
     useEffect(() => {
-        fetchSemuaAset();
         fetchPekerjaanAktif();
-        fetchRiwayatPekerjaan();
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -322,6 +371,25 @@ export default function DashboardPetugas() {
         setShowRiwayat(true);
     };
 
+    const handleMapChange = useCallback((payload) => {
+        setMapZoom(payload.zoom);
+        setMapBounds(payload.bounds);
+    }, []);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            fetchAsetMap(mapBounds, mapZoom);
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [mapBounds, mapZoom, fetchAsetMap]);
+
+    const asetTampilDiMap = useMemo(() => {
+        return semuaAset;
+    }, [semuaAset]);
+
+    const markerBelumMuncul = !loadingAset && mapZoom < MIN_ZOOM_MARKER;
+
     return (
         <div style={{ position: 'relative', height: '100dvh', width: '100vw', overflow: 'hidden' }}>
 
@@ -358,16 +426,13 @@ export default function DashboardPetugas() {
                 <MapContainer center={defaultCenter} zoom={13} style={{ height: '100%', width: '100%' }} zoomControl={false}>
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                     <ChangeMapView coords={lokasiTarget} />
+                    <MapTracker onChange={handleMapChange} />
 
                     {/* PIN ASET */}
-                    {!loadingAset && semuaAset.map((aset) => {
-                        const tikor = aset.tikor_baru || aset.tikor || aset.pelanggan?.tikor;
+                    {!loadingAset && asetTampilDiMap.map((aset) => {
+                        const coords = [Number(aset.lat), Number(aset.lng)];
 
-                        if (!tikor) return null;
-
-                        const coords = tikor.split(',').map(c => parseFloat(c.trim()));
-
-                        if (coords.length !== 2 || isNaN(coords[0]) || isNaN(coords[1])) return null;
+                        if (isNaN(coords[0]) || isNaN(coords[1])) return null;
 
                         const isSelesai = aset.status_pekerjaan === 'selesai';
                         const iconDipakai = isSelesai ? assetIconSelesai : assetIcon;
@@ -449,9 +514,15 @@ export default function DashboardPetugas() {
                 <Alert
                     variant="warning"
                     className="py-2 px-3 shadow-sm rounded-pill text-center border-0"
-                    style={{ fontSize: '0.75rem', fontWeight: 'bold', backgroundColor: 'rgba(255, 243, 205, 0.9)' }}
+                    style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 'bold',
+                        backgroundColor: 'rgba(255, 243, 205, 0.92)',
+                    }}
                 >
-                    💡 Tahan & geser Pin Emas untuk memilih target area.
+                    {markerBelumMuncul
+                        ? '🔍 Zoom lebih dekat untuk melihat titik aset • Geser Pin Emas untuk pilih area'
+                        : '💡 Tahan & geser Pin Emas untuk memilih target area'}
                 </Alert>
             </div>
 
