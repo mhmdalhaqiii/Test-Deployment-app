@@ -98,11 +98,15 @@ export default function DashboardPetugas() {
     const [loadingSPK, setLoadingSPK] = useState(false);
     const [showRekomendasi, setShowRekomendasi] = useState(false);
     const [showPekerjaanList, setShowPekerjaanList] = useState(false);
+
     const [showRiwayat, setShowRiwayat] = useState(false);
     const [loadingRiwayat, setLoadingRiwayat] = useState(false);
+
     const [riwayatPage, setRiwayatPage] = useState(1);
     const [riwayatMeta, setRiwayatMeta] = useState(null);
+
     const [ambilTiketLoadingId, setAmbilTiketLoadingId] = useState(null);
+    const [mulaiProsesLoadingId, setMulaiProsesLoadingId] = useState(null);
 
     // State Modal Notifikasi Kustom
     const [modalNotif, setModalNotif] = useState({
@@ -316,8 +320,12 @@ export default function DashboardPetugas() {
     };
 
     const handleMulaiProses = async (tiket) => {
+        const tiketId = tiket.tiket_id || tiket.id;
+
+        if (!tiketId || mulaiProsesLoadingId) return;
+
         try {
-            const tiketId = tiket.tiket_id || tiket.id;
+            setMulaiProsesLoadingId(tiketId);
 
             const response = await api.post(`/tiket/${tiketId}/mulai`);
 
@@ -329,13 +337,13 @@ export default function DashboardPetugas() {
                     isSuccess: true
                 });
 
-                await fetchPekerjaanAktif();
+                // Sinkronisasi jalan di belakang, jangan bikin user nunggu lama
+                fetchPekerjaanAktif();
 
                 setTimeout(() => {
                     setModalNotif(prev => ({ ...prev, show: false }));
                     navigate(`/pekerjaan/${tiketId}`);
-                }, 2000);
-
+                }, 800);
             } else {
                 setModalNotif({
                     show: true,
@@ -353,6 +361,8 @@ export default function DashboardPetugas() {
                 message: error.response?.data?.message || 'Terjadi kesalahan saat memulai pekerjaan.',
                 isSuccess: false
             });
+        } finally {
+            setMulaiProsesLoadingId(null);
         }
     };
 
@@ -862,11 +872,19 @@ export default function DashboardPetugas() {
                                     ) : (
                                         <Button
                                             variant="primary"
-                                            className="w-50 fw-bold rounded-pill shadow-sm border-0"
+                                            className="w-50 fw-bold rounded-pill shadow-sm border-0 d-flex align-items-center justify-content-center"
                                             style={{ backgroundColor: '#0c2b4d' }}
                                             onClick={() => handleMulaiProses(tiket)}
+                                            disabled={mulaiProsesLoadingId === (tiket.tiket_id || tiket.id)}
                                         >
-                                            Mulai Proses
+                                            {mulaiProsesLoadingId === (tiket.tiket_id || tiket.id) ? (
+                                                <>
+                                                    <Spinner animation="border" size="sm" className="me-2" />
+                                                    Memulai...
+                                                </>
+                                            ) : (
+                                                'Mulai Proses'
+                                            )}
                                         </Button>
                                     )}
                                 </div>
