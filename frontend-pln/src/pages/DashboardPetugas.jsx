@@ -99,6 +99,10 @@ export default function DashboardPetugas() {
     const [showRekomendasi, setShowRekomendasi] = useState(false);
     const [showPekerjaanList, setShowPekerjaanList] = useState(false);
     const [showRiwayat, setShowRiwayat] = useState(false);
+    const [loadingRiwayat, setLoadingRiwayat] = useState(false);
+    const [riwayatPage, setRiwayatPage] = useState(1);
+    const [riwayatMeta, setRiwayatMeta] = useState(null);
+    const [ambilTiketLoadingId, setAmbilTiketLoadingId] = useState(null);
 
     // State Modal Notifikasi Kustom
     const [modalNotif, setModalNotif] = useState({
@@ -156,15 +160,34 @@ export default function DashboardPetugas() {
         }
     };
 
-    const fetchRiwayatPekerjaan = async () => {
+    const fetchRiwayatPekerjaan = async (page = 1, append = false) => {
         try {
-            const response = await api.get('/riwayat-pekerjaan-saya');
+            setLoadingRiwayat(true);
 
-            const data = response.data.data || response.data || [];
+            const response = await api.get('/riwayat-pekerjaan-saya', {
+                params: {
+                    page,
+                    per_page: 10,
+                },
+            });
 
-            setRiwayatData(Array.isArray(data) ? data : []);
+            const data = response.data.data || [];
+            const meta = response.data.meta || null;
+
+            setRiwayatData((prev) => {
+                if (append) {
+                    return [...prev, ...data];
+                }
+
+                return Array.isArray(data) ? data : [];
+            });
+
+            setRiwayatMeta(meta);
+            setRiwayatPage(page);
         } catch (error) {
             console.error("Gagal sinkronisasi data riwayat", error.response?.data || error);
+        } finally {
+            setLoadingRiwayat(false);
         }
     };
 
@@ -202,11 +225,20 @@ export default function DashboardPetugas() {
             const response = await api.get('/spk/prioritas', {
                 params: {
                     lat: latTarget,
-                    lng: lngTarget
+                    lng: lngTarget,
+                    radius: 5,
+                    limit: 10,
                 }
             });
 
-            setSpkData(response.data.data || []);
+            const dataPrioritas = response.data.data || [];
+
+            const dataDenganNomorAsli = dataPrioritas.map((item, index) => ({
+                ...item,
+                nomor_prioritas_asli: index + 1,
+            }));
+
+            setSpkData(dataDenganNomorAsli);
             setShowRekomendasi(true);
 
         } catch (error) {
@@ -237,17 +269,18 @@ export default function DashboardPetugas() {
     };
 
     const handleAmbilTiket = async (tiket) => {
+        const tiketId = tiket.tiket_id || tiket.id;
+
+        if (!tiketId || ambilTiketLoadingId) return;
+
         try {
-            const tiketId = tiket.tiket_id || tiket.id;
+            setAmbilTiketLoadingId(tiketId);
 
             const response = await api.post('/tiket/ambil-pekerjaan', {
                 tiket_ids: [tiketId],
-                tim_id: user?.tim_id || 1
             });
 
             if (response.data.success) {
-                await fetchPekerjaanAktif();
-
                 setSpkData(prevData =>
                     prevData.filter(item => (item.tiket_id || item.id) !== tiketId)
                 );
@@ -258,6 +291,8 @@ export default function DashboardPetugas() {
                     message: 'Tiket berhasil diambil. Silakan periksa di menu Pekerjaan Hari Ini.',
                     isSuccess: true
                 });
+
+                fetchPekerjaanAktif();
             } else {
                 setModalNotif({
                     show: true,
@@ -275,6 +310,8 @@ export default function DashboardPetugas() {
                 message: error.response?.data?.message || 'Terjadi kesalahan saat mengambil tiket.',
                 isSuccess: false
             });
+        } finally {
+            setAmbilTiketLoadingId(null);
         }
     };
 
@@ -367,8 +404,18 @@ export default function DashboardPetugas() {
     }).length;
 
     const handleOpenRiwayat = async () => {
-        await fetchRiwayatPekerjaan();
         setShowRiwayat(true);
+        setRiwayatData([]);
+        setRiwayatMeta(null);
+        setRiwayatPage(1);
+
+        await fetchRiwayatPekerjaan(1, false);
+    };
+
+    const handleLoadMoreRiwayat = async () => {
+        if (!riwayatMeta?.has_more || loadingRiwayat) return;
+
+        await fetchRiwayatPekerjaan(riwayatPage + 1, true);
     };
 
     const handleMapChange = useCallback((payload) => {
@@ -669,8 +716,11 @@ export default function DashboardPetugas() {
                         spkData.map((tiket, idx) => (
                             <div key={tiket.tiket_id || tiket.id} className="border p-3 mb-3 rounded-4 shadow-sm bg-white">
                                 <div className="d-flex justify-content-between align-items-center mb-2">
-                                    <Badge bg={idx === 0 ? 'danger' : 'warning'} className="rounded-pill px-3 py-1">
-                                        Prioritas #{idx + 1}
+                                    <Badge
+                                        bg={tiket.nomor_prioritas_asli === 1 ? 'danger' : 'warning'}
+                                        className="rounded-pill px-3 py-1"
+                                    >
+                                        Prioritas #{tiket.nomor_prioritas_asli || idx + 1}
                                     </Badge>
 
                                     <span className="fw-bold text-success small">
@@ -712,8 +762,16 @@ export default function DashboardPetugas() {
                                     className="w-100 fw-bold rounded-pill"
                                     style={{ borderColor: '#0c2b4d', color: '#0c2b4d' }}
                                     onClick={() => handleAmbilTiket(tiket)}
+                                    disabled={ambilTiketLoadingId === (tiket.tiket_id || tiket.id)}
                                 >
-                                    Ambil Tiket Ini
+                                    {ambilTiketLoadingId === (tiket.tiket_id || tiket.id) ? (
+                                        <>
+                                            <Spinner animation="border" size="sm" className="me-2" />
+                                            Mengambil Tiket...
+                                        </>
+                                    ) : (
+                                        'Ambil Tiket Ini'
+                                    )}
                                 </Button>
                             </div>
                         ))
@@ -836,7 +894,12 @@ export default function DashboardPetugas() {
                         Daftar pekerjaan APP TR yang telah selesai Anda kerjakan.
                     </p>
 
-                    {riwayatData.length === 0 ? (
+                    {loadingRiwayat && riwayatData.length === 0 ? (
+                        <div className="text-center text-muted mt-5">
+                            <Spinner animation="border" size="sm" className="me-2" />
+                            Memuat riwayat...
+                        </div>
+                    ) : riwayatData.length === 0 ? (
                         <div className="text-center text-muted mt-5">
                             Belum ada riwayat pekerjaan.
                         </div>
@@ -901,9 +964,25 @@ export default function DashboardPetugas() {
                             );
                         })
                     )}
+
+                    {loadingRiwayat && riwayatData.length > 0 && (
+                        <div className="text-center text-muted py-3">
+                            <Spinner animation="border" size="sm" className="me-2" />
+                            Memuat riwayat...
+                        </div>
+                    )}
+
+                    {!loadingRiwayat && riwayatMeta?.has_more && (
+                        <Button
+                            variant="light"
+                            className="w-100 rounded-pill fw-bold border mt-2"
+                            onClick={handleLoadMoreRiwayat}
+                        >
+                            Muat Lagi
+                        </Button>
+                    )}
                 </Offcanvas.Body>
             </Offcanvas>
-
         </div>
     );
 }

@@ -58,92 +58,151 @@ class TiketPekerjaanController extends Controller
     }
 
     public function ambilPekerjaan(Request $request)
-    {
-        $request->validate([
-            'tiket_ids' => 'required|array',
-            'tiket_ids.*' => 'exists:tiket_pekerjaan,id',
-            'tim_id' => 'required|exists:tim,id',
-        ]);
+{
+    $request->validate([
+        'tiket_ids' => 'required|array|min:1',
+        'tiket_ids.*' => 'required|integer|exists:tiket_pekerjaan,id',
+    ]);
 
-        // Cek apakah tiket sudah dalam status berjalan/selesai
-        $tiketBermasalah = TiketPekerjaan::whereIn('id', $request->tiket_ids)
-            ->whereNotIn('status', ['tersedia', null])
+    $user = $request->user();
+
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'User tidak authenticated'
+        ], 401);
+    }
+
+    $petugas = Petugas::query()
+        ->select(['id', 'user_id', 'tim_id'])
+        ->where('user_id', $user->id)
+        ->first();
+
+    if (!$petugas || !$petugas->tim_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Petugas belum memiliki tim.'
+        ], 400);
+    }
+
+    $tiketIds = collect($request->tiket_ids)
+        ->map(fn ($id) => (int) $id)
+        ->unique()
+        ->values()
+        ->all();
+
+    DB::beginTransaction();
+
+    try {
+        $jumlahTiketTersedia = TiketPekerjaan::query()
+            ->whereIn('id', $tiketIds)
+            ->where('status', 'tersedia')
             ->count();
 
-        if ($tiketBermasalah > 0) {
+        if ($jumlahTiketTersedia !== count($tiketIds)) {
+            DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Tiket sudah dalam status berjalan/selesai.'
+                'message' => 'Tiket sudah diambil petugas lain atau tidak tersedia lagi.'
             ], 422);
         }
 
-        // Update tiket
-        $updated = TiketPekerjaan::whereIn('id', $request->tiket_ids)
+        $updated = TiketPekerjaan::query()
+            ->whereIn('id', $tiketIds)
+            ->where('status', 'tersedia')
             ->update([
                 'status' => 'berjalan',
-                'tim_id' => $request->tim_id
+                'tim_id' => $petugas->tim_id,
+                'updated_at' => now(),
             ]);
 
-        if ($updated === 0) {
+        if ($updated !== count($tiketIds)) {
+            DB::rollBack();
+
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal update tiket - tidak ada record yang diupdate'
+                'message' => 'Gagal mengambil tiket. Silakan coba lagi.'
             ], 500);
         }
 
-        // Return data tiket yang sudah diupdate
-        $tiketTerupdate = TiketPekerjaan::whereIn('id', $request->tiket_ids)
-            ->with('aset')
-            ->get();
+        DB::commit();
 
         return response()->json([
             'success' => true,
-            'message' => 'Berhasil mengambil ' . count($request->tiket_ids) . ' tiket',
-            'data' => $tiketTerupdate
+            'message' => 'Tiket berhasil diambil.',
+            'data' => [
+                'tiket_ids' => $tiketIds,
+                'updated_count' => $updated,
+            ],
         ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal mengambil tiket',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
 
 
     public function pekerjaanAktif(Request $request)
-    {
-        $user = $request->user();
+{
+    $user = $request->user();
 
-        // Validasi user ada
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User tidak authenticated'
-            ], 401);
-        }
-
-        // Query Petugas berdasarkan user_id
-        $petugas = Petugas::where('user_id', $user->id)->first();
-
-        if (!$petugas) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Petugas tidak ditemukan untuk user ini'
-            ], 404);
-        }
-
-        // Validasi petugas punya tim_id
-        if (!$petugas->tim_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Petugas tidak memiliki tim_id'
-            ], 400);
-        }
-
-        $pekerjaan = TiketPekerjaan::with('aset.pelanggan')
-            ->where('tim_id', $petugas->tim_id)
-            ->whereIn('status', ['berjalan', 'dikerjakan'])
-            ->get();
-
+    if (!$user) {
         return response()->json([
-            'success' => true,
-            'data' => $pekerjaan
-        ]);
+            'success' => false,
+            'message' => 'User tidak authenticated'
+        ], 401);
     }
+
+    $petugas = Petugas::query()
+        ->select(['id', 'user_id', 'tim_id'])
+        ->where('user_id', $user->id)
+        ->first();
+
+    if (!$petugas) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Petugas tidak ditemukan untuk user ini'
+        ], 404);
+    }
+
+    if (!$petugas->tim_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Petugas tidak memiliki tim_id'
+        ], 400);
+    }
+
+    $pekerjaan = TiketPekerjaan::query()
+        ->select([
+            'id',
+            'aset_id',
+            'nomor_tiket',
+            'tanggal_tiket',
+            'status',
+            'tim_id',
+            'updated_at',
+        ])
+        ->with([
+            'aset:id,pelanggan_id,nomor_kwh,merek_kwh,tikor_baru',
+            'aset.pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan,tikor',
+        ])
+        ->where('tim_id', $petugas->tim_id)
+        ->whereIn('status', ['berjalan', 'dikerjakan'])
+        ->orderBy('updated_at', 'desc')
+        ->limit(50)
+        ->get();
+
+    return response()->json([
+        'success' => true,
+        'data' => $pekerjaan
+    ]);
+}
 
     /**
      * Ambil riwayat pekerjaan (status: selesai)
@@ -168,15 +227,39 @@ class TiketPekerjaanController extends Controller
             ], 400);
         }
 
-        $riwayat = TiketPekerjaan::with(['aset.pelanggan', 'pekerjaan'])
+        $perPage = (int) $request->query('per_page', 10);
+        $perPage = $perPage > 20 ? 20 : $perPage;
+
+        $riwayat = TiketPekerjaan::query()
+            ->select([
+                'id',
+                'aset_id',
+                'nomor_tiket',
+                'tanggal_tiket',
+                'status',
+                'tim_id',
+                'updated_at',
+            ])
+            ->with([
+                'aset:id,pelanggan_id,nomor_kwh,merek_kwh,thtera_kwh',
+                'aset.pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan',
+                'pekerjaan',
+            ])
             ->where('tim_id', $petugas->tim_id)
             ->whereIn('status', ['inReview', 'menungguValidasi', 'selesai'])
             ->orderBy('updated_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'success' => true,
-            'data' => $riwayat
+            'data' => $riwayat->items(),
+            'meta' => [
+                'current_page' => $riwayat->currentPage(),
+                'last_page' => $riwayat->lastPage(),
+                'per_page' => $riwayat->perPage(),
+                'total' => $riwayat->total(),
+                'has_more' => $riwayat->hasMorePages(),
+            ],
         ]);
     }
 

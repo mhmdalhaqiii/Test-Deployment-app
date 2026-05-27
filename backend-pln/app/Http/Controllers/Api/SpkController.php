@@ -12,87 +12,154 @@ class SpkController extends Controller
 {
     public function prioritas(Request $request, SpkSawService $service): JsonResponse
     {
-        $tikets = TiketPekerjaan::with('aset.pelanggan')
-        ->where('status', 'tersedia')
-        ->get();
+        $request->validate([
+            'lat' => 'required|numeric',
+            'lng' => 'required|numeric',
+            'radius' => 'nullable|numeric|min:0.1|max:50',
+            'limit' => 'nullable|integer|min:1|max:50',
+        ]);
 
-        $alternatif = $tikets->map(function ($tiket){
-            return[
-                'tiket_id' => $tiket->id,
-                'nomor_tiket' => $tiket->nomor_tiket,
-                'nama_pelanggan' => $tiket->aset->pelanggan->nama_pelanggan,
-                'alamat_pelanggan' => $tiket->aset->pelanggan->alamat_pelanggan,
-                'koordinat' => $tiket->aset->tikor_baru ?? $tiket->aset->pelanggan->tikor,
+        $latPetugas = (float) $request->lat;
+        $lngPetugas = (float) $request->lng;
 
-                'daya' => (float) $tiket->aset->pelanggan->daya,
-                'selisih_tahun_tera' => $tiket->aset->selisih_tahun_tera,
-                'jenis' => $tiket->aset->pelanggan->tarif_score,
-            ];
-        })->toArray();
+        $radiusKm = (float) $request->query('radius', 5);
+        $limit = (int) $request->query('limit', 10);
 
-        // 1. Hitung SAW menggunakan Service
-        $hasil_semua = $service->hitung($alternatif);
+        /*
+        |--------------------------------------------------------------------------
+        | Ambil data secukupnya saja
+        |--------------------------------------------------------------------------
+        | Jangan ambil semua kolom. Ambil hanya kolom yang dibutuhkan SPK.
+        */
+        $tikets = TiketPekerjaan::query()
+            ->select([
+                'id',
+                'aset_id',
+                'nomor_tiket',
+                'status',
+            ])
+            ->where('status', 'tersedia')
+            ->where(function ($query) {
+                $query
+                    ->whereHas('aset', function ($q) {
+                        $q->whereNotNull('tikor_baru');
+                    })
+                    ->orWhereHas('aset.pelanggan', function ($q) {
+                        $q->whereNotNull('tikor');
+                    });
+            })
+            ->with([
+                'aset:id,pelanggan_id,tikor_baru,thtera_kwh',
+                'aset.pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan,daya,tarif,tikor',
+            ])
+            ->get();
 
-        // 2. Hitung Jarak (Haversine) dan Filter Maksimal 5 km
-        $latPetugas = $request->lat;
-        $lngPetugas = $request->lng;
+        $alternatif = [];
 
-        if ($latPetugas && $lngPetugas) {
-            foreach ($hasil_semua as &$hasil) {
-                $koordinatAset = $hasil['koordinat'] ?? null;
+        foreach ($tikets as $tiket) {
+            $aset = $tiket->aset;
+            $pelanggan = $aset?->pelanggan;
 
-                if ($koordinatAset) {
-                    $pecahTikor = explode(',', $koordinatAset);
-
-                    if (count($pecahTikor) >= 2) {
-                        $latAset = (float) trim($pecahTikor[0]);
-                        $lngAset = (float) trim($pecahTikor[1]);
-
-                        // Panggil fungsi Haversine
-                        $jarakKm = $this->hitungJarakHaversine($latPetugas, $lngPetugas, $latAset, $lngAset);
-                        $hasil['jarak_km'] = round($jarakKm, 2);
-                    } else {
-                        $hasil['jarak_km'] = null; // Format koma salah
-                    }
-                } else {
-                    $hasil['jarak_km'] = null; // Tidak punya koordinat
-                }
+            if (!$aset || !$pelanggan) {
+                continue;
             }
 
-            // FILTER: Buang yang null dan buang yang jaraknya > 5 km
-            $hasil_semua = array_filter($hasil_semua, function ($item) {
-                return $item['jarak_km'] !== null && $item['jarak_km'] <= 5;
-            });
+            $koordinat = $aset->tikor_baru ?: $pelanggan->tikor;
+            $coords = $this->parseKoordinat($koordinat);
+
+            if (!$coords) {
+                continue;
+            }
+
+            [$latAset, $lngAset] = $coords;
+
+            $jarakKm = $this->hitungJarakHaversine(
+                $latPetugas,
+                $lngPetugas,
+                $latAset,
+                $lngAset
+            );
+
+            if ($jarakKm > $radiusKm) {
+                continue;
+            }
+
+            $alternatif[] = [
+                'tiket_id' => $tiket->id,
+                'nomor_tiket' => $tiket->nomor_tiket,
+
+                'nama_pelanggan' => $pelanggan->nama_pelanggan,
+                'alamat_pelanggan' => $pelanggan->alamat_pelanggan,
+                'koordinat' => $koordinat,
+
+                'daya' => (float) $pelanggan->daya,
+                'selisih_tahun_tera' => $aset->selisih_tahun_tera,
+                'jenis' => $pelanggan->tarif_score,
+
+                'jarak_km' => round($jarakKm, 2),
+            ];
         }
 
-        // 3. Potong Data Jadi 10 Teratas
-        $hasil_terbatas = array_slice($hasil_semua, 0, 10);
-        $hasil_terbatas = array_values($hasil_terbatas);
+        if (empty($alternatif)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Tidak ada tiket tersedia di sekitar area ini.',
+                'data' => [],
+            ]);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Hitung SAW hanya untuk kandidat dalam radius
+        |--------------------------------------------------------------------------
+        */
+        $hasil = $service->hitung($alternatif);
+
+        $hasilTerbatas = array_slice($hasil, 0, $limit);
+        $hasilTerbatas = array_values($hasilTerbatas);
 
         return response()->json([
-            'success'    => true,
-            'message'    => 'Berhasil mengambil prioritas pemeliharaan',
-            'data'       => $hasil_terbatas
+            'success' => true,
+            'message' => 'Berhasil mengambil prioritas pemeliharaan',
+            'data' => $hasilTerbatas,
         ]);
     }
 
-    /**
-     * Rumus Matematika Haversine untuk jarak lurus (Kilometer)
-     */
+    private function parseKoordinat(?string $koordinat): ?array
+    {
+        if (!$koordinat || !str_contains($koordinat, ',')) {
+            return null;
+        }
+
+        $pecah = explode(',', $koordinat);
+
+        if (count($pecah) < 2) {
+            return null;
+        }
+
+        $lat = (float) trim($pecah[0]);
+        $lng = (float) trim($pecah[1]);
+
+        if (!$lat || !$lng) {
+            return null;
+        }
+
+        return [$lat, $lng];
+    }
+
     private function hitungJarakHaversine(float $lat1, float $lon1, float $lat2, float $lon2): float
     {
-        $earthRadius = 6371; // Radius bumi dalam kilometer
+        $earthRadius = 6371;
 
         $dLat = deg2rad($lat2 - $lat1);
         $dLon = deg2rad($lon2 - $lon1);
 
         $a = sin($dLat / 2) * sin($dLat / 2) +
-             cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
-             sin($dLon / 2) * sin($dLon / 2);
+            cos(deg2rad($lat1)) * cos(deg2rad($lat2)) *
+            sin($dLon / 2) * sin($dLon / 2);
 
         $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
-        $jarak = $earthRadius * $c;
 
-        return $jarak;
+        return $earthRadius * $c;
     }
 }
