@@ -18,6 +18,10 @@ export default function FormFotoPekerjaan() {
 
     const [bulkUploading, setBulkUploading] = useState(false);
     const [reviewSending, setReviewSending] = useState(false);
+    const [showConfirmKembali, setShowConfirmKembali] = useState(false);
+    const [kembaliLoading, setKembaliLoading] = useState(false);
+
+    const isProcessing = reviewSending || bulkUploading || kembaliLoading;
 
     const [modalNotif, setModalNotif] = useState({
         show: false,
@@ -239,6 +243,21 @@ export default function FormFotoPekerjaan() {
         }
     };
 
+    const handleOpenConfirmKembali = () => {
+        if (isProcessing) return;
+        setShowConfirmKembali(true);
+    };
+
+    const executeKembali = () => {
+        if (kembaliLoading) return;
+
+        setKembaliLoading(true);
+
+        setTimeout(() => {
+            navigate(`/pekerjaan/${id}`);
+        }, 700);
+    };
+
     const handleKirimReview = async () => {
         if (!pekerjaanId) {
             setModalNotif({
@@ -450,19 +469,78 @@ export default function FormFotoPekerjaan() {
                 </Modal.Body>
             </Modal>
 
+            <Modal
+                show={showConfirmKembali}
+                onHide={() => {
+                    if (!kembaliLoading) setShowConfirmKembali(false);
+                }}
+                centered
+                size="sm"
+            >
+                <Modal.Body className="text-center p-4">
+                    <div className="mb-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#ffc107" className="bi bi-exclamation-triangle-fill" viewBox="0 0 16 16">
+                            <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
+                        </svg>
+                    </div>
+
+                    <h5 className="fw-bold mb-2">Kembali ke Form Laporan?</h5>
+
+                    <p className="text-muted small mb-4">
+                        {pendingUploadCount > 0
+                            ? 'Masih ada foto yang belum diupload. Jika kembali sekarang, pilihan foto yang belum diupload bisa hilang.'
+                            : 'Anda akan kembali ke halaman form laporan pekerjaan.'}
+                    </p>
+
+                    <div className="d-flex gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            className="w-50 rounded-pill fw-bold"
+                            onClick={() => setShowConfirmKembali(false)}
+                            disabled={kembaliLoading}
+                        >
+                            Tidak
+                        </Button>
+
+                        <Button
+                            className="w-50 rounded-pill fw-bold d-flex align-items-center justify-content-center"
+                            style={{
+                                backgroundColor: '#0c2b4d',
+                                border: 'none',
+                            }}
+                            onClick={executeKembali}
+                            disabled={kembaliLoading}
+                        >
+                            {kembaliLoading ? (
+                                <>
+                                    <Spinner animation="border" size="sm" className="me-2" />
+                                    Kembali...
+                                </>
+                            ) : (
+                                'Ya, Kembali'
+                            )}
+                        </Button>
+                    </div>
+                </Modal.Body>
+            </Modal>
+
             <div className="d-flex align-items-center mb-4 gap-3">
                 <Button
                     variant="white"
-                    className="rounded-circle shadow-sm border"
-                    onClick={() => navigate(`/pekerjaan/${id}`)}
+                    className="rounded-circle shadow-sm border d-flex align-items-center justify-content-center"
+                    onClick={handleOpenConfirmKembali}
                     style={{ width: '45px', height: '45px' }}
-                    disabled={reviewSending || bulkUploading}
+                    disabled={isProcessing}
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="#0c2b4d" className="bi bi-arrow-left" viewBox="0 0 16 16">
-                        <path fillRule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z" />
-                    </svg>
+                    {kembaliLoading ? (
+                        <Spinner animation="border" size="sm" style={{ color: '#0c2b4d' }} />
+                    ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="#0c2b4d" className="bi bi-arrow-left" viewBox="0 0 16 16">
+                            <path fillRule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z" />
+                        </svg>
+                    )}
                 </Button>
-
+                
                 <div>
                     <h4 className="fw-bold mb-0" style={{ color: '#0c2b4d' }}>Upload Foto Pekerjaan</h4>
                     <span className="text-muted small fw-bold">
@@ -544,19 +622,32 @@ export default function FormFotoPekerjaan() {
                 }}
             >
                 <Button
-                    variant="outline-secondary"
-                    className="fw-bold rounded-pill px-3"
-                    onClick={() => navigate(`/pekerjaan/${id}`)}
-                    disabled={reviewSending || bulkUploading}
+                    variant="light"
+                    className="fw-bold rounded-pill px-3 d-flex align-items-center justify-content-center"
+                    onClick={handleOpenConfirmKembali}
+                    disabled={isProcessing}
+                    style={{
+                        border: '1px solid #0c2b4d',
+                        color: '#0c2b4d',
+                        backgroundColor: '#ffffff',
+                        minWidth: '105px',
+                    }}
                 >
-                    Kembali
+                    {kembaliLoading ? (
+                        <>
+                            <Spinner animation="border" size="sm" className="me-2" />
+                            Kembali...
+                        </>
+                    ) : (
+                        'Kembali'
+                    )}
                 </Button>
 
                 <Button
                     variant="warning"
                     className="fw-bold rounded-pill px-3 shadow-sm"
                     onClick={() => handleUploadSemuaFoto(true)}
-                    disabled={reviewSending || bulkUploading || pendingUploadCount === 0 || !pekerjaanId}
+                    disabled={isProcessing || pendingUploadCount === 0 || !pekerjaanId}
                 >
                     {bulkUploading ? (
                         <>
@@ -573,7 +664,7 @@ export default function FormFotoPekerjaan() {
                     className="fw-bold rounded-pill px-4 shadow-sm flex-grow-1"
                     style={{ backgroundColor: '#0c2b4d', border: 'none' }}
                     onClick={handleKirimReview}
-                    disabled={reviewSending || bulkUploading || !pekerjaanId}
+                    disabled={isProcessing || !pekerjaanId}
                 >
                     {reviewSending ? (
                         <>

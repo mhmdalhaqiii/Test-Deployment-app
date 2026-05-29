@@ -13,6 +13,9 @@ export default function FormPekerjaan() {
     const [gpsLoading, setGpsLoading] = useState(false);
     const [draftSaving, setDraftSaving] = useState(false);
     const [finalSaving, setFinalSaving] = useState(false);
+    const [batalLoading, setBatalLoading] = useState(false);
+
+    const isProcessing = gpsLoading || draftSaving || finalSaving || batalLoading;
 
 
     const [modalNotif, setModalNotif] = useState({
@@ -375,10 +378,14 @@ export default function FormPekerjaan() {
 
 
     const executeBatalPekerjaan = async () => {
-        setShowConfirmBatal(false);
+        if (batalLoading) return;
 
         try {
+            setBatalLoading(true);
+
             await api.post(`/tiket/${id}/batal`);
+
+            setShowConfirmBatal(false);
 
             setModalNotif({
                 show: true,
@@ -389,10 +396,12 @@ export default function FormPekerjaan() {
 
             setTimeout(() => {
                 navigate('/dashboard-petugas');
-            }, 2000);
+            }, 900);
 
         } catch (error) {
             console.error("Gagal membatalkan tiket", error);
+
+            setBatalLoading(false);
 
             setModalNotif({
                 show: true,
@@ -404,6 +413,8 @@ export default function FormPekerjaan() {
     };
 
     const handleSimpanLaporan = async () => {
+        if (finalSaving) return;
+
         try {
             setFinalSaving(true);
 
@@ -422,10 +433,12 @@ export default function FormPekerjaan() {
 
             setTimeout(() => {
                 navigate(`/pekerjaan/${id}/foto`);
-            }, 1000);
+            }, 900);
 
         } catch (error) {
             console.error("Gagal menyimpan:", error.response?.data || error);
+
+            setFinalSaving(false);
 
             const errorMessage = error.response?.data?.message || 'Terjadi kesalahan saat mengirim data laporan. Cek console.';
 
@@ -435,8 +448,6 @@ export default function FormPekerjaan() {
                 message: errorMessage,
                 isSuccess: false
             });
-        } finally {
-            setFinalSaving(false);
         }
     };
 
@@ -505,16 +516,25 @@ export default function FormPekerjaan() {
                             variant="outline-secondary"
                             className="w-50 rounded-pill fw-bold"
                             onClick={() => setShowConfirmBatal(false)}
+                            disabled={batalLoading}
                         >
                             Tidak
                         </Button>
 
                         <Button
                             variant="danger"
-                            className="w-50 rounded-pill fw-bold"
+                            className="w-50 rounded-pill fw-bold d-flex align-items-center justify-content-center"
                             onClick={executeBatalPekerjaan}
+                            disabled={batalLoading}
                         >
-                            Ya, Batal
+                            {batalLoading ? (
+                                <>
+                                    <Spinner animation="border" size="sm" className="me-2" />
+                                    Membatalkan...
+                                </>
+                            ) : (
+                                'Ya, Batal'
+                            )}
                         </Button>
                     </div>
                 </Modal.Body>
@@ -524,7 +544,7 @@ export default function FormPekerjaan() {
                 <Button
                     variant="white"
                     className="rounded-circle shadow-sm border"
-                    onClick={() => navigate(-1)}
+                    onClick={() => navigate('/dashboard-petugas')}
                     style={{ width: '45px', height: '45px' }}
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="#0c2b4d" className="bi bi-arrow-left" viewBox="0 0 16 16">
@@ -909,7 +929,7 @@ export default function FormPekerjaan() {
                                     className="rounded-3 fw-bold shadow-sm d-flex align-items-center justify-content-center"
                                     style={{ minWidth: '130px' }}
                                     onClick={handleAmbilLokasi}
-                                    disabled={gpsLoading || draftSaving || finalSaving}
+                                    disabled={isProcessing}
                                 >
                                     {gpsLoading ? (
                                         <>
@@ -948,7 +968,7 @@ export default function FormPekerjaan() {
                     variant="outline-danger"
                     className="fw-bold rounded-pill px-3"
                     onClick={() => setShowConfirmBatal(true)}
-                    disabled={draftSaving || finalSaving}
+                    disabled={isProcessing}
                 >
                     Batal
                 </Button>
@@ -957,7 +977,7 @@ export default function FormPekerjaan() {
                     variant="warning"
                     className="fw-bold rounded-pill px-3 shadow-sm"
                     onClick={handleSimpanDraft}
-                    disabled={draftSaving || finalSaving}
+                    disabled={isProcessing}
                 >
                     {draftSaving ? (
                         <>
@@ -974,12 +994,12 @@ export default function FormPekerjaan() {
                     className="fw-bold rounded-pill px-4 shadow-sm"
                     style={{ backgroundColor: '#0c2b4d', border: 'none' }}
                     onClick={handleSimpanLaporan}
-                    disabled={draftSaving || finalSaving}
+                    disabled={isProcessing}
                 >
                     {finalSaving ? (
                         <>
                             <Spinner animation="border" size="sm" className="me-2" />
-                            Simpan
+                            Menyimpan...
                         </>
                     ) : (
                         'Simpan Laporan'
