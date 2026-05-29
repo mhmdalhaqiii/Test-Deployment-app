@@ -325,7 +325,7 @@ function HeroPanel({
                                 variant="light"
                                 className="fw-bold rounded-pill shadow-sm py-2"
                                 style={{ color: PLN_BLUE }}
-                                onClick={fetchPekerjaanManajer}
+                                onClick={() => fetchPekerjaanManajer(1)}
                                 disabled={loading}
                             >
                                 {loading ? <Spinner animation="border" size="sm" /> : 'Refresh'}
@@ -443,6 +443,24 @@ export default function DashboardManajer() {
 
     const [loading, setLoading] = useState(true);
     const [pekerjaanData, setPekerjaanData] = useState([]);
+    const [meta, setMeta] = useState(null);
+    const [serverStatistik, setServerStatistik] = useState({
+        total: 0,
+        hari_ini: 0,
+        berjalan: 0,
+        dikerjakan: 0,
+        inReview: 0,
+        menungguValidasi: 0,
+        selesai: 0,
+        status_counts: {
+            semua: 0,
+            berjalan: 0,
+            dikerjakan: 0,
+            inReview: 0,
+            menungguValidasi: 0,
+            selesai: 0,
+        },
+    });
     const [filterStatus, setFilterStatus] = useState('semua');
     const [searchTerm, setSearchTerm] = useState('');
     const [modalNotif, setModalNotif] = useState({
@@ -453,19 +471,33 @@ export default function DashboardManajer() {
     });
 
     useEffect(() => {
-        fetchPekerjaanManajer();
-    }, []);
+        const timer = setTimeout(() => {
+            fetchPekerjaanManajer(1);
+        }, 400);
 
-    const fetchPekerjaanManajer = async () => {
+        return () => clearTimeout(timer);
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterStatus, searchTerm]);
+
+    const fetchPekerjaanManajer = async (page = 1) => {
         try {
             setLoading(true);
 
             const response = await api.get('/manajer/pekerjaan', {
-                params: { status: 'semua' },
+                params: {
+                    status: filterStatus,
+                    search: searchTerm,
+                    page,
+                    per_page: 10,
+                },
             });
 
-            const data = response.data.data || response.data || [];
+            const data = response.data.data || [];
+
             setPekerjaanData(Array.isArray(data) ? data : []);
+            setMeta(response.data.meta || null);
+            setServerStatistik(response.data.statistik || serverStatistik);
         } catch (error) {
             console.error('Gagal memuat pekerjaan manajer:', error.response?.data || error);
 
@@ -486,76 +518,35 @@ export default function DashboardManajer() {
     };
 
     const statistik = useMemo(() => {
-        const countByStatus = (status) => pekerjaanData.filter((item) => item.status === status).length;
-
         return {
-            total: pekerjaanData.length,
-            berjalan: countByStatus('berjalan'),
-            dikerjakan: countByStatus('dikerjakan'),
-            inReview: countByStatus('inReview'),
-            menungguValidasi: countByStatus('menungguValidasi'),
-            selesai: countByStatus('selesai'),
+            total: serverStatistik.total || 0,
+            berjalan: serverStatistik.berjalan || 0,
+            dikerjakan: serverStatistik.dikerjakan || 0,
+            inReview: serverStatistik.inReview || 0,
+            menungguValidasi: serverStatistik.menungguValidasi || 0,
+            selesai: serverStatistik.selesai || 0,
         };
-    }, [pekerjaanData]);
+    }, [serverStatistik]);
 
-    const hariIniCount = useMemo(() => {
-        const today = new Date().toISOString().slice(0, 10);
+    const hariIniCount = serverStatistik.hari_ini || 0;
 
-        return pekerjaanData.filter((item) => {
-            const date = item.updated_at?.slice(0, 10) || item.tanggal_tiket;
-            return date === today;
-        }).length;
-    }, [pekerjaanData]);
+    const statusCounts = serverStatistik.status_counts || {
+        semua: 0,
+        berjalan: 0,
+        dikerjakan: 0,
+        inReview: 0,
+        menungguValidasi: 0,
+        selesai: 0,
+    };
 
-    const statusCounts = useMemo(() => {
-        return STATUS_OPTIONS.reduce((result, option) => {
-            result[option.key] = option.key === 'semua'
-                ? pekerjaanData.length
-                : pekerjaanData.filter((item) => item.status === option.key).length;
+    const filteredData = pekerjaanData;
 
-            return result;
-        }, {});
-    }, [pekerjaanData]);
+    const activeStatusLabel =
+        STATUS_OPTIONS.find((option) => option.key === filterStatus)?.label || 'Semua';
 
-    const filteredData = useMemo(() => {
-        let result = [...pekerjaanData];
-
-        if (filterStatus !== 'semua') {
-            result = result.filter((item) => item.status === filterStatus);
-        }
-
-        const keyword = searchTerm.trim().toLowerCase();
-
-        if (keyword) {
-            result = result.filter((item) => {
-                const pelanggan = item.aset?.pelanggan;
-                const pekerjaan = item.pekerjaan;
-
-                const searchable = [
-                    item.nomor_tiket,
-                    pelanggan?.nama_pelanggan,
-                    pelanggan?.idpel,
-                    pekerjaan?.idpel,
-                    pelanggan?.alamat_pelanggan,
-                    pekerjaan?.petugas?.nama_petugas,
-                    item.tim?.nama_tim,
-                    pekerjaan?.tim?.nama_tim,
-                    pekerjaan?.rekomendasi,
-                    item.status,
-                ]
-                    .filter(Boolean)
-                    .join(' ')
-                    .toLowerCase();
-
-                return searchable.includes(keyword);
-            });
-        }
-
-        return result;
-    }, [pekerjaanData, filterStatus, searchTerm]);
-
-    const activeStatusLabel = STATUS_OPTIONS.find((option) => option.key === filterStatus)?.label || 'Semua';
     const isFiltered = filterStatus !== 'semua' || searchTerm.trim() !== '';
+
+    const totalDitemukan = meta?.total ?? filteredData.length;
 
     return (
         <div className="min-vh-100 bg-light py-3 py-lg-4">
@@ -584,7 +575,7 @@ export default function DashboardManajer() {
                     <div>
                         <h4 className="fw-bold mb-1 text-dark">Data Lapangan</h4>
                         <div className="small text-muted">
-                            Ditemukan <span className="fw-bold text-dark">{filteredData.length}</span> laporan pekerjaan
+                            Ditemukan <span className="fw-bold text-dark">{totalDitemukan}</span> laporan pekerjaan
                         </div>
                     </div>
 
@@ -615,6 +606,32 @@ export default function DashboardManajer() {
                                 onDetail={(id) => navigate(`/manajer/pekerjaan/${id}`)}
                             />
                         ))}
+
+                        {meta && meta.last_page > 1 && (
+                            <div className="d-flex justify-content-center align-items-center gap-2 mt-4">
+                                <Button
+                                    variant="light"
+                                    className="rounded-pill fw-bold border shadow-sm px-4"
+                                    disabled={loading || meta.current_page <= 1}
+                                    onClick={() => fetchPekerjaanManajer(meta.current_page - 1)}
+                                >
+                                    Sebelumnya
+                                </Button>
+
+                                <Badge bg="light" text="dark" className="rounded-pill px-3 py-2 border">
+                                    Halaman {meta.current_page} / {meta.last_page}
+                                </Badge>
+
+                                <Button
+                                    variant="light"
+                                    className="rounded-pill fw-bold border shadow-sm px-4"
+                                    disabled={loading || meta.current_page >= meta.last_page}
+                                    onClick={() => fetchPekerjaanManajer(meta.current_page + 1)}
+                                >
+                                    Berikutnya
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
             </Container>
