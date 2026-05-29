@@ -1,10 +1,10 @@
 <?php
 
 namespace App\Http\Controllers\Api;
-
 use App\Http\Controllers\Controller;
 use App\Models\TiketPekerjaan;
 use App\Models\Petugas;
+use App\Models\PekerjaanPemeliharaan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -331,22 +331,62 @@ class TiketPekerjaanController extends Controller
     }
 
     public function batalDikerjakan($id)
-    {
+{
+    DB::beginTransaction();
+
+    try {
         $tiket = TiketPekerjaan::find($id);
 
         if (!$tiket) {
-            return response()->json(['success' => false, 'message' => 'Tiket tidak ditemukan'], 404);
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Tiket tidak ditemukan'
+            ], 404);
         }
 
-        // Kembalikan statusnya ke berjalan
-        $tiket->status = 'berjalan';
-        $tiket->save();
+        if (!in_array($tiket->status, ['berjalan', 'dikerjakan'])) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Pengisian hanya bisa dibatalkan saat status berjalan atau dikerjakan.'
+            ], 422);
+        }
+
+        $pekerjaanList = PekerjaanPemeliharaan::with('foto')
+            ->where('tiket_id', $tiket->id)
+            ->get();
+
+        foreach ($pekerjaanList as $pekerjaan) {
+            if ($pekerjaan->foto) {
+                $pekerjaan->foto->delete();
+            }
+
+            $pekerjaan->delete();
+        }
+
+        $tiket->update([
+            'status' => 'berjalan',
+        ]);
+
+        DB::commit();
 
         return response()->json([
             'success' => true,
-            'message' => 'Pekerjaan dibatalkan, status kembali berjalan.'
+            'message' => 'Pengisian dibatalkan. Data laporan sementara berhasil dihapus dan status tiket kembali berjalan.'
         ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal membatalkan pengisian',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
 
     public function manajerIndex(Request $request)
     {

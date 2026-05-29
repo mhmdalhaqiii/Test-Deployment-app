@@ -390,7 +390,7 @@ export default function FormPekerjaan() {
             setModalNotif({
                 show: true,
                 title: 'Dibatalkan',
-                message: 'Pekerjaan dibatalkan, status tiket kembali menjadi Berjalan.',
+                message: 'Pekerjaan dibatalkan. Data laporan sementara dihapus dan status tiket kembali menjadi Berjalan.',
                 isSuccess: true
             });
 
@@ -508,8 +508,10 @@ export default function FormPekerjaan() {
                         </svg>
                     </div>
 
-                    <h5 className="fw-bold mb-2">Batalkan Pekerjaan?</h5>
-                    <p className="text-muted small mb-4">Status tiket ini akan dikembalikan menjadi 'Berjalan'.</p>
+                    <h5 className="fw-bold mb-2">Batalkan Pengisian?</h5>
+                    <p className="text-muted small mb-4">
+                        Data laporan sementara yang sudah diisi akan dihapus. Status tiket akan kembali menjadi Berjalan dan tetap berada di daftar pekerjaan Anda.
+                    </p>
 
                     <div className="d-flex gap-2">
                         <Button
