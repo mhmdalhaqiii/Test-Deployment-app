@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
     Badge,
     Button,
@@ -72,9 +72,17 @@ export default function AdminAset() {
     const [deleting, setDeleting] = useState(false);
 
     const [asetData, setAsetData] = useState([]);
-    const [pelangganData, setPelangganData] = useState([]);
+    const [pelangganOptions, setPelangganOptions] = useState([]);
+
+    const [meta, setMeta] = useState(null);
+    const [serverStatistik, setServerStatistik] = useState({
+        total_aset: 0,
+        total_filter: 0,
+    });
 
     const [searchTerm, setSearchTerm] = useState('');
+    const [searchPelanggan, setSearchPelanggan] = useState('');
+    const [loadingPelanggan, setLoadingPelanggan] = useState(false);
 
     const [showFormModal, setShowFormModal] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -98,20 +106,26 @@ export default function AdminAset() {
         isSuccess: true,
     });
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (page = 1) => {
         try {
             setLoading(true);
 
-            const [asetResponse, pelangganResponse] = await Promise.all([
-                api.get('/aset'),
-                api.get('/pelanggan'),
-            ]);
+            const response = await api.get('/aset', {
+                params: {
+                    search: searchTerm,
+                    page,
+                    per_page: 10,
+                },
+            });
 
-            const aset = asetResponse.data.data || asetResponse.data || [];
-            const pelanggan = pelangganResponse.data.data || pelangganResponse.data || [];
+            const data = response.data.data || [];
 
-            setAsetData(Array.isArray(aset) ? aset : []);
-            setPelangganData(Array.isArray(pelanggan) ? pelanggan : []);
+            setAsetData(Array.isArray(data) ? data : []);
+            setMeta(response.data.meta || null);
+            setServerStatistik(response.data.statistik || {
+                total_aset: 0,
+                total_filter: 0,
+            });
         } catch (error) {
             console.error('Gagal memuat aset:', error.response?.data || error);
 
@@ -124,70 +138,51 @@ export default function AdminAset() {
         } finally {
             setLoading(false);
         }
+    }, [searchTerm]);
+
+    const fetchPelangganOptions = useCallback(async (keyword = '') => {
+        try {
+            setLoadingPelanggan(true);
+
+            const response = await api.get('/pelanggan', {
+                params: {
+                    available_for_aset: 1,
+                    search: keyword,
+                    page: 1,
+                    per_page: 25,
+                },
+            });
+
+            const data = response.data.data || [];
+
+            setPelangganOptions(Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error('Gagal memuat pilihan pelanggan:', error.response?.data || error);
+
+            setModalNotif({
+                show: true,
+                title: 'Gagal Memuat Pelanggan',
+                message: error.response?.data?.message || 'Pilihan pelanggan gagal dimuat.',
+                isSuccess: false,
+            });
+        } finally {
+            setLoadingPelanggan(false);
+        }
     }, []);
 
     useEffect(() => {
-        fetchData();
+        const timer = setTimeout(() => {
+            fetchData(1);
+        }, 400);
+
+        return () => clearTimeout(timer);
     }, [fetchData]);
 
-    const filteredData = useMemo(() => {
-        const keyword = searchTerm.trim().toLowerCase();
+    const filteredData = asetData;
 
-        let result = [...asetData];
-
-        if (keyword) {
-            result = result.filter((item) => {
-                const pelanggan = item.pelanggan;
-
-                const searchable = [
-                    item.id,
-                    item.nomor_kwh,
-                    item.merek_kwh,
-                    item.thtera_kwh,
-                    item.faktor_kali_dil,
-                    item.tikor_baru,
-                    item.status_pekerjaan,
-                    pelanggan?.idpel,
-                    pelanggan?.unitup,
-                    pelanggan?.nama_pelanggan,
-                    pelanggan?.alamat_pelanggan,
-                    pelanggan?.tarif,
-                    pelanggan?.daya,
-                ]
-                    .filter(Boolean)
-                    .join(' ')
-                    .toLowerCase();
-
-                return searchable.includes(keyword);
-            });
-        }
-
-        return result.sort((a, b) => Number(a.id) - Number(b.id));
-    }, [asetData, searchTerm]);
-
-    const statistik = useMemo(() => {
-        const selesai = asetData.filter((item) => item.status_pekerjaan === 'selesai').length;
-        const belum = asetData.length - selesai;
-
-        return {
-            total: asetData.length,
-            selesai,
-            belum,
-            pelanggan: pelangganData.length,
-        };
-    }, [asetData, pelangganData]);
-
-    const pelangganBelumPunyaAset = useMemo(() => {
-        const pelangganIdYangSudahPunyaAset = new Set(
-            asetData
-                .map((aset) => String(aset.pelanggan_id))
-                .filter(Boolean)
-        );
-
-        return pelangganData
-            .filter((pelanggan) => !pelangganIdYangSudahPunyaAset.has(String(pelanggan.id)))
-            .sort((a, b) => Number(a.id) - Number(b.id));
-    }, [pelangganData, asetData]);
+    const totalAset = serverStatistik.total_aset || meta?.total || filteredData.length;
+    const totalFilter = meta?.total ?? serverStatistik.total_filter ?? filteredData.length;
+    const jumlahDitampilkan = filteredData.length;
 
     const resetForm = () => {
         setEditData(null);
@@ -202,20 +197,11 @@ export default function AdminAset() {
         });
     };
 
-    const openCreateModal = () => {
-        if (pelangganBelumPunyaAset.length === 0) {
-            setModalNotif({
-                show: true,
-                title: 'Tidak Ada Pelanggan Tersedia',
-                message: 'Semua pelanggan sudah memiliki aset. Tambahkan pelanggan baru terlebih dahulu.',
-                isSuccess: false,
-            });
-
-            return;
-        }
-
+    const openCreateModal = async () => {
         resetForm();
+        setSearchPelanggan('');
         setShowFormModal(true);
+        await fetchPelangganOptions('');
     };
 
     const openEditModal = (item) => {
@@ -229,7 +215,7 @@ export default function AdminAset() {
             faktor_kali_dil: item.faktor_kali_dil || '',
             tikor_baru: item.tikor_baru || '',
         });
-
+        setPelangganOptions(item.pelanggan ? [item.pelanggan] : []);
         setShowFormModal(true);
     };
 
@@ -274,7 +260,7 @@ export default function AdminAset() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menyimpan aset:', error.response?.data || error);
 
@@ -319,7 +305,7 @@ export default function AdminAset() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menghapus aset:', error.response?.data || error);
 
@@ -421,25 +407,46 @@ export default function AdminAset() {
                                         Pelanggan
                                     </Form.Label>
 
+                                    {!editData && (
+                                        <InputGroup className="mb-2">
+                                            <InputGroup.Text className="bg-light border-0">
+                                                🔎
+                                            </InputGroup.Text>
+
+                                            <Form.Control
+                                                className="bg-light border-0"
+                                                placeholder="Cari IDPEL / nama pelanggan..."
+                                                value={searchPelanggan}
+                                                onChange={async (event) => {
+                                                    const value = event.target.value;
+                                                    setSearchPelanggan(value);
+                                                    await fetchPelangganOptions(value);
+                                                }}
+                                            />
+                                        </InputGroup>
+                                    )}
+
                                     <Form.Select
                                         name="pelanggan_id"
                                         value={formData.pelanggan_id}
                                         onChange={handleChange}
                                         required
-                                        disabled={Boolean(editData)}
+                                        disabled={Boolean(editData) || loadingPelanggan}
                                     >
-                                        <option value="">Pilih pelanggan</option>
+                                        <option value="">
+                                            {loadingPelanggan ? 'Memuat pelanggan...' : 'Pilih pelanggan'}
+                                        </option>
 
-                                        {(editData ? pelangganData : pelangganBelumPunyaAset).map((pelanggan) => (
+                                        {pelangganOptions.map((pelanggan) => (
                                             <option key={pelanggan.id} value={pelanggan.id}>
                                                 {getPelangganLabel(pelanggan)}
                                             </option>
                                         ))}
                                     </Form.Select>
 
-                                    {!editData && pelangganBelumPunyaAset.length === 0 && (
+                                    {!editData && pelangganOptions.length === 0 && !loadingPelanggan && (
                                         <div className="small text-danger mt-1">
-                                            Semua pelanggan sudah memiliki aset. Tambahkan pelanggan baru terlebih dahulu.
+                                            Tidak ada pelanggan tersedia. Coba cari IDPEL/nama pelanggan lain.
                                         </div>
                                     )}
 
@@ -605,7 +612,6 @@ export default function AdminAset() {
                                     variant="warning"
                                     className="rounded-pill fw-bold px-3"
                                     onClick={openCreateModal}
-                                    disabled={pelangganBelumPunyaAset.length === 0}
                                 >
                                     + Tambah Aset
                                 </Button>
@@ -616,39 +622,27 @@ export default function AdminAset() {
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
                                     <div className="small text-white-50">Total Aset</div>
-                                    <div className="display-6 fw-bold mb-0">{statistik.total}</div>
+                                    <div className="display-6 fw-bold mb-0">{totalAset}</div>
                                 </div>
                             </Col>
 
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Belum Selesai</div>
-                                    <div className="display-6 fw-bold mb-0">{statistik.belum}</div>
+                                    <div className="small text-white-50">Hasil Pencarian</div>
+                                    <div className="display-6 fw-bold mb-0">{totalFilter}</div>
                                 </div>
                             </Col>
 
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Selesai</div>
-                                    <div className="display-6 fw-bold mb-0">{statistik.selesai}</div>
-                                </div>
-                            </Col>
-
-                            <Col xs={6} md={3}>
-                                <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Pelanggan</div>
-                                    <div className="display-6 fw-bold mb-0">{statistik.pelanggan}</div>
+                                    <div className="small text-white-50">Ditampilkan</div>
+                                    <div className="display-6 fw-bold mb-0">{jumlahDitampilkan}</div>
                                 </div>
                             </Col>
                         </Row>
                     </Card.Body>
                 </Card>
 
-                {pelangganBelumPunyaAset.length === 0 && !loading && (
-                    <div className="alert alert-warning rounded-4 shadow-sm border-0">
-                        Semua pelanggan sudah memiliki aset. Untuk menambah aset baru, tambahkan pelanggan baru terlebih dahulu.
-                    </div>
-                )}
 
                 <Card className="border-0 shadow-sm rounded-4 mb-4">
                     <Card.Body className="p-3 p-md-4">
@@ -682,7 +676,7 @@ export default function AdminAset() {
                                 <Button
                                     variant="outline-secondary"
                                     className="w-100 rounded-pill fw-bold"
-                                    onClick={fetchData}
+                                    onClick={() => fetchData(1)}
                                     disabled={loading}
                                 >
                                     {loading ? 'Memuat...' : 'Refresh'}
@@ -711,160 +705,221 @@ export default function AdminAset() {
                                 </div>
                             </div>
                         ) : (
-                            <div
-                                className="table-responsive"
-                                style={{
-                                    maxHeight: '68vh',
-                                    overflow: 'auto',
-                                    borderRadius: 16,
-                                }}
-                            >
-                                <Table
-                                    hover
-                                    className="align-middle mb-0"
+                            <>
+                                <div
+                                    className="table-responsive"
                                     style={{
-                                        minWidth: 1450,
-                                        fontSize: '0.875rem',
+                                        maxHeight: '68vh',
+                                        overflow: 'auto',
+                                        borderRadius: 16,
                                     }}
                                 >
-                                    <thead
-                                        className="table-light"
+                                    <Table
+                                        hover
+                                        className="align-middle mb-0"
                                         style={{
-                                            position: 'sticky',
-                                            top: 0,
-                                            zIndex: 2,
+                                            minWidth: 1450,
+                                            fontSize: '0.875rem',
                                         }}
                                     >
-                                        <tr>
-                                            <th className="ps-4" style={{ width: 70 }}>ID</th>
-                                            <th style={{ width: 150 }}>IDPEL</th>
-                                            <th style={{ width: 90 }}>Unit UP</th>
-                                            <th style={{ width: 250 }}>Pelanggan</th>
-                                            <th style={{ width: 160 }}>Nomor kWh</th>
-                                            <th style={{ width: 120 }}>Merek</th>
-                                            <th style={{ width: 110 }}>Tahun Tera</th>
-                                            <th style={{ width: 110 }}>Faktor Kali</th>
-                                            <th style={{ width: 190 }}>Tikor Baru</th>
-                                            <th style={{ width: 130 }}>Status</th>
-                                            <th
-                                                className="text-end pe-4 bg-light"
-                                                style={{
-                                                    width: 150,
-                                                    position: 'sticky',
-                                                    right: 0,
-                                                    zIndex: 3,
-                                                    boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.06)',
-                                                }}
-                                            >
-                                                Aksi
-                                            </th>
-                                        </tr>
-                                    </thead>
+                                        <thead
+                                            className="table-light"
+                                            style={{
+                                                position: 'sticky',
+                                                top: 0,
+                                                zIndex: 2,
+                                            }}
+                                        >
+                                            <tr>
+                                                <th className="ps-4" style={{ width: 70 }}>
+                                                    ID
+                                                </th>
 
-                                    <tbody>
-                                        {filteredData.map((item) => (
-                                            <tr key={item.id}>
-                                                <td className="ps-4">
-                                                    <Badge bg="light" text="dark" className="rounded-pill">
-                                                        #{item.id}
-                                                    </Badge>
-                                                </td>
+                                                <th style={{ width: 150 }}>
+                                                    IDPEL
+                                                </th>
 
-                                                <td className="fw-bold" style={{ color: PLN_BLUE }}>
-                                                    {item.pelanggan?.idpel || '-'}
-                                                </td>
+                                                <th style={{ width: 90 }}>
+                                                    Unit UP
+                                                </th>
 
-                                                <td>
-                                                    <Badge bg="secondary" className="rounded-pill">
-                                                        {item.pelanggan?.unitup || '-'}
-                                                    </Badge>
-                                                </td>
+                                                <th style={{ width: 250 }}>
+                                                    Pelanggan
+                                                </th>
 
-                                                <td>
-                                                    <div
-                                                        className="fw-semibold text-truncate"
-                                                        title={item.pelanggan?.nama_pelanggan || '-'}
-                                                        style={{ maxWidth: 240 }}
-                                                    >
-                                                        {item.pelanggan?.nama_pelanggan || '-'}
-                                                    </div>
+                                                <th style={{ width: 160 }}>
+                                                    Nomor kWh
+                                                </th>
 
-                                                    <div
-                                                        className="small text-muted text-truncate"
-                                                        title={item.pelanggan?.alamat_pelanggan || '-'}
-                                                        style={{ maxWidth: 240 }}
-                                                    >
-                                                        {item.pelanggan?.alamat_pelanggan || '-'}
-                                                    </div>
-                                                </td>
+                                                <th style={{ width: 120 }}>
+                                                    Merek
+                                                </th>
 
-                                                <td className="fw-semibold">
-                                                    {item.nomor_kwh || '-'}
-                                                </td>
+                                                <th style={{ width: 110 }}>
+                                                    Tahun Tera
+                                                </th>
 
-                                                <td>
-                                                    <Badge bg="info" text="dark" className="rounded-pill">
-                                                        {item.merek_kwh || '-'}
-                                                    </Badge>
-                                                </td>
+                                                <th style={{ width: 110 }}>
+                                                    Faktor Kali
+                                                </th>
 
-                                                <td>
-                                                    {item.thtera_kwh || '-'}
-                                                </td>
+                                                <th style={{ width: 190 }}>
+                                                    Tikor Baru
+                                                </th>
 
-                                                <td className="fw-semibold">
-                                                    {item.faktor_kali_dil || '-'}
-                                                </td>
+                                                <th style={{ width: 130 }}>
+                                                    Status
+                                                </th>
 
-                                                <td>
-                                                    <div
-                                                        className="small text-muted text-truncate"
-                                                        title={item.tikor_baru || '-'}
-                                                        style={{ maxWidth: 180 }}
-                                                    >
-                                                        {item.tikor_baru || '-'}
-                                                    </div>
-                                                </td>
-
-                                                <td>
-                                                    {getStatusBadge(item.status_pekerjaan)}
-                                                </td>
-
-                                                <td
-                                                    className="text-end pe-4 bg-white"
+                                                <th
+                                                    className="text-end pe-4 bg-light"
                                                     style={{
+                                                        width: 150,
                                                         position: 'sticky',
                                                         right: 0,
-                                                        zIndex: 1,
-                                                        boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.04)',
+                                                        zIndex: 3,
+                                                        boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.06)',
                                                     }}
                                                 >
-                                                    <div className="d-flex justify-content-end gap-2">
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline-primary"
-                                                            className="rounded-pill fw-bold px-3"
-                                                            style={{ color: PLN_BLUE, borderColor: PLN_BLUE }}
-                                                            onClick={() => openEditModal(item)}
-                                                        >
-                                                            Edit
-                                                        </Button>
-
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline-danger"
-                                                            className="rounded-pill fw-bold px-3"
-                                                            onClick={() => openDeleteModal(item)}
-                                                        >
-                                                            Hapus
-                                                        </Button>
-                                                    </div>
-                                                </td>
+                                                    Aksi
+                                                </th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </Table>
-                            </div>
+                                        </thead>
+
+                                        <tbody>
+                                            {filteredData.map((item) => (
+                                                <tr key={item.id}>
+                                                    <td className="ps-4">
+                                                        <Badge bg="light" text="dark" className="rounded-pill">
+                                                            #{item.id}
+                                                        </Badge>
+                                                    </td>
+
+                                                    <td className="fw-bold" style={{ color: PLN_BLUE }}>
+                                                        {item.pelanggan?.idpel || '-'}
+                                                    </td>
+
+                                                    <td>
+                                                        <Badge bg="secondary" className="rounded-pill">
+                                                            {item.pelanggan?.unitup || '-'}
+                                                        </Badge>
+                                                    </td>
+
+                                                    <td>
+                                                        <div
+                                                            className="fw-semibold text-truncate"
+                                                            title={item.pelanggan?.nama_pelanggan || '-'}
+                                                            style={{ maxWidth: 240 }}
+                                                        >
+                                                            {item.pelanggan?.nama_pelanggan || '-'}
+                                                        </div>
+
+                                                        <div
+                                                            className="small text-muted text-truncate"
+                                                            title={item.pelanggan?.alamat_pelanggan || '-'}
+                                                            style={{ maxWidth: 240 }}
+                                                        >
+                                                            {item.pelanggan?.alamat_pelanggan || '-'}
+                                                        </div>
+                                                    </td>
+
+                                                    <td className="fw-semibold">
+                                                        {item.nomor_kwh || '-'}
+                                                    </td>
+
+                                                    <td>
+                                                        <Badge bg="info" text="dark" className="rounded-pill">
+                                                            {item.merek_kwh || '-'}
+                                                        </Badge>
+                                                    </td>
+
+                                                    <td>
+                                                        {item.thtera_kwh || '-'}
+                                                    </td>
+
+                                                    <td className="fw-semibold">
+                                                        {item.faktor_kali_dil || '-'}
+                                                    </td>
+
+                                                    <td>
+                                                        <div
+                                                            className="small text-muted text-truncate"
+                                                            title={item.tikor_baru || '-'}
+                                                            style={{ maxWidth: 180 }}
+                                                        >
+                                                            {item.tikor_baru || '-'}
+                                                        </div>
+                                                    </td>
+
+                                                    <td>
+                                                        {getStatusBadge(item.status_pekerjaan)}
+                                                    </td>
+
+                                                    <td
+                                                        className="text-end pe-4 bg-white"
+                                                        style={{
+                                                            position: 'sticky',
+                                                            right: 0,
+                                                            zIndex: 1,
+                                                            boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.04)',
+                                                        }}
+                                                    >
+                                                        <div className="d-flex justify-content-end gap-2">
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline-primary"
+                                                                className="rounded-pill fw-bold px-3"
+                                                                style={{
+                                                                    color: PLN_BLUE,
+                                                                    borderColor: PLN_BLUE,
+                                                                }}
+                                                                onClick={() => openEditModal(item)}
+                                                            >
+                                                                Edit
+                                                            </Button>
+
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline-danger"
+                                                                className="rounded-pill fw-bold px-3"
+                                                                onClick={() => openDeleteModal(item)}
+                                                            >
+                                                                Hapus
+                                                            </Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </Table>
+                                </div>
+
+                                {meta && meta.last_page > 1 && (
+                                    <div className="d-flex justify-content-center align-items-center gap-2 p-3 border-top">
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page <= 1}
+                                            onClick={() => fetchData(meta.current_page - 1)}
+                                        >
+                                            Sebelumnya
+                                        </Button>
+
+                                        <Badge bg="light" text="dark" className="rounded-pill px-3 py-2 border">
+                                            Halaman {meta.current_page} / {meta.last_page}
+                                        </Badge>
+
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page >= meta.last_page}
+                                            onClick={() => fetchData(meta.current_page + 1)}
+                                        >
+                                            Berikutnya
+                                        </Button>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </Card.Body>
                 </Card>

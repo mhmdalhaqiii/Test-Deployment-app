@@ -432,6 +432,10 @@ class PekerjaanPemeliharaanController extends Controller
     public function adminReviewIndex(Request $request)
     {
         $status = $request->query('status', 'inReview');
+        $search = trim($request->query('search', ''));
+
+        $perPage = (int) $request->query('per_page', 10);
+        $perPage = $perPage > 25 ? 25 : $perPage;
 
         $allowedStatuses = [
             'inReview',
@@ -446,21 +450,107 @@ class PekerjaanPemeliharaanController extends Controller
             ], 422);
         }
 
-        $data = PekerjaanPemeliharaan::with([
-            'tiket.aset.pelanggan',
-            'petugas',
-            'tim',
-            'foto'
-        ])
+        /*
+    |--------------------------------------------------------------------------
+    | Base query untuk statistik dan pencarian
+    |--------------------------------------------------------------------------
+    */
+        $baseQuery = PekerjaanPemeliharaan::query()
+            ->whereHas('tiket', function ($query) use ($allowedStatuses) {
+                $query->whereIn('status', $allowedStatuses);
+            });
+
+        if ($search !== '') {
+            $baseQuery->where(function ($query) use ($search) {
+                $query
+                    ->where('idpel', 'like', "%{$search}%")
+                    ->orWhere('rekomendasi', 'like', "%{$search}%")
+                    ->orWhere('catatan_ct', 'like', "%{$search}%")
+                    ->orWhereHas('tiket', function ($q) use ($search) {
+                        $q->where('nomor_tiket', 'like', "%{$search}%")
+                            ->orWhere('status', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('tiket.aset.pelanggan', function ($q) use ($search) {
+                        $q->where('nama_pelanggan', 'like', "%{$search}%")
+                            ->orWhere('idpel', 'like', "%{$search}%")
+                            ->orWhere('alamat_pelanggan', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('petugas', function ($q) use ($search) {
+                        $q->where('nama_petugas', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('tim', function ($q) use ($search) {
+                        $q->where('nama_tim', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        /*
+    |--------------------------------------------------------------------------
+    | Statistik status berdasarkan hasil search
+    |--------------------------------------------------------------------------
+    */
+        $statusCountsRaw = (clone $baseQuery)
+            ->join('tiket_pekerjaan', 'pekerjaan_pemeliharaan.tiket_id', '=', 'tiket_pekerjaan.id')
+            ->select('tiket_pekerjaan.status', DB::raw('COUNT(*) as total'))
+            ->whereIn('tiket_pekerjaan.status', $allowedStatuses)
+            ->groupBy('tiket_pekerjaan.status')
+            ->pluck('total', 'tiket_pekerjaan.status')
+            ->toArray();
+
+        $statusCounts = [
+            'inReview' => (int) ($statusCountsRaw['inReview'] ?? 0),
+            'menungguValidasi' => (int) ($statusCountsRaw['menungguValidasi'] ?? 0),
+            'selesai' => (int) ($statusCountsRaw['selesai'] ?? 0),
+        ];
+
+        /*
+    |--------------------------------------------------------------------------
+    | Query utama data review admin
+    |--------------------------------------------------------------------------
+    */
+        $query = (clone $baseQuery)
+            ->select([
+                'id',
+                'tiket_id',
+                'petugas_id',
+                'tim_id',
+                'idpel',
+                'tanggal',
+                'catatan_ct',
+                'rekomendasi',
+                'updated_at',
+            ])
+            ->with([
+                'tiket:id,aset_id,nomor_tiket,status',
+                'tiket.aset:id,pelanggan_id',
+                'tiket.aset.pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan',
+                'petugas:id,nama_petugas',
+                'tim:id,nama_tim',
+            ])
             ->whereHas('tiket', function ($query) use ($status) {
                 $query->where('status', $status);
             })
-            ->orderBy('updated_at', 'desc')
-            ->get();
+            ->orderBy('updated_at', 'desc');
+
+        $data = $query->paginate($perPage);
 
         return response()->json([
             'success' => true,
-            'data' => $data
+            'data' => $data->items(),
+            'meta' => [
+                'current_page' => $data->currentPage(),
+                'last_page' => $data->lastPage(),
+                'per_page' => $data->perPage(),
+                'total' => $data->total(),
+                'has_more' => $data->hasMorePages(),
+            ],
+            'statistik' => [
+                'total' => array_sum($statusCounts),
+                'inReview' => $statusCounts['inReview'],
+                'menungguValidasi' => $statusCounts['menungguValidasi'],
+                'selesai' => $statusCounts['selesai'],
+                'status_counts' => $statusCounts,
+            ],
         ]);
     }
 
@@ -480,67 +570,67 @@ class PekerjaanPemeliharaanController extends Controller
     }
 
     public function adminReviewUpdate(Request $request, $id)
-{
-    $pekerjaan = PekerjaanPemeliharaan::with('tiket')->findOrFail($id);
+    {
+        $pekerjaan = PekerjaanPemeliharaan::with('tiket')->findOrFail($id);
 
-    if (!$pekerjaan->tiket || $pekerjaan->tiket->status !== 'inReview') {
+        if (!$pekerjaan->tiket || $pekerjaan->tiket->status !== 'inReview') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data hanya bisa diedit saat status masih inReview.'
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'pemadaman' => 'nullable|string',
+            'konstruksi_app' => 'nullable|string',
+            'faktor_kali_dil' => 'nullable|numeric',
+            'faktor_kali_real' => 'nullable|numeric',
+
+            'arus_primer_r_ukur' => 'nullable|numeric',
+            'arus_primer_s_ukur' => 'nullable|numeric',
+            'arus_primer_t_ukur' => 'nullable|numeric',
+            'tegangan_primer_r_ukur' => 'nullable|numeric',
+            'tegangan_primer_s_ukur' => 'nullable|numeric',
+            'tegangan_primer_t_ukur' => 'nullable|numeric',
+            'cos_phi_primer' => 'nullable|numeric',
+            'p_primer_r' => 'nullable|numeric',
+            'p_primer_s' => 'nullable|numeric',
+            'p_primer_t' => 'nullable|numeric',
+            'p_primer_total' => 'nullable|numeric',
+
+            'arus_sekunder_r_ukur' => 'nullable|numeric',
+            'arus_sekunder_s_ukur' => 'nullable|numeric',
+            'arus_sekunder_t_ukur' => 'nullable|numeric',
+            'arus_sekunder_r_meter' => 'nullable|numeric',
+            'arus_sekunder_s_meter' => 'nullable|numeric',
+            'arus_sekunder_t_meter' => 'nullable|numeric',
+            'tegangan_meter_r' => 'nullable|numeric',
+            'tegangan_meter_s' => 'nullable|numeric',
+            'tegangan_meter_t' => 'nullable|numeric',
+            'cos_phi_sekunder' => 'nullable|numeric',
+
+            'merk_box' => 'nullable|string',
+            'no_seri_box' => 'nullable|string',
+            'tahun_box' => 'nullable|string',
+            'kondisi_box_segel_kwh' => 'nullable|string',
+            'tikor_baru' => 'nullable|string',
+            'tanggal' => 'nullable|string',
+            'jam' => 'nullable|string',
+            'keterangan' => 'nullable|string',
+            'catatan' => 'nullable|string',
+        ]);
+
+        $pekerjaan->update($data);
+
         return response()->json([
-            'success' => false,
-            'message' => 'Data hanya bisa diedit saat status masih inReview.'
-        ], 422);
+            'success' => true,
+            'message' => 'Data review berhasil diperbarui',
+            'data' => $pekerjaan->fresh([
+                'tiket.aset.pelanggan',
+                'petugas',
+                'tim',
+                'foto'
+            ])
+        ]);
     }
-
-    $data = $request->validate([
-        'pemadaman' => 'nullable|string',
-        'konstruksi_app' => 'nullable|string',
-        'faktor_kali_dil' => 'nullable|numeric',
-        'faktor_kali_real' => 'nullable|numeric',
-
-        'arus_primer_r_ukur' => 'nullable|numeric',
-        'arus_primer_s_ukur' => 'nullable|numeric',
-        'arus_primer_t_ukur' => 'nullable|numeric',
-        'tegangan_primer_r_ukur' => 'nullable|numeric',
-        'tegangan_primer_s_ukur' => 'nullable|numeric',
-        'tegangan_primer_t_ukur' => 'nullable|numeric',
-        'cos_phi_primer' => 'nullable|numeric',
-        'p_primer_r' => 'nullable|numeric',
-        'p_primer_s' => 'nullable|numeric',
-        'p_primer_t' => 'nullable|numeric',
-        'p_primer_total' => 'nullable|numeric',
-
-        'arus_sekunder_r_ukur' => 'nullable|numeric',
-        'arus_sekunder_s_ukur' => 'nullable|numeric',
-        'arus_sekunder_t_ukur' => 'nullable|numeric',
-        'arus_sekunder_r_meter' => 'nullable|numeric',
-        'arus_sekunder_s_meter' => 'nullable|numeric',
-        'arus_sekunder_t_meter' => 'nullable|numeric',
-        'tegangan_meter_r' => 'nullable|numeric',
-        'tegangan_meter_s' => 'nullable|numeric',
-        'tegangan_meter_t' => 'nullable|numeric',
-        'cos_phi_sekunder' => 'nullable|numeric',
-
-        'merk_box' => 'nullable|string',
-        'no_seri_box' => 'nullable|string',
-        'tahun_box' => 'nullable|string',
-        'kondisi_box_segel_kwh' => 'nullable|string',
-        'tikor_baru' => 'nullable|string',
-        'tanggal' => 'nullable|string',
-        'jam' => 'nullable|string',
-        'keterangan' => 'nullable|string',
-        'catatan' => 'nullable|string',
-    ]);
-
-    $pekerjaan->update($data);
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Data review berhasil diperbarui',
-        'data' => $pekerjaan->fresh([
-            'tiket.aset.pelanggan',
-            'petugas',
-            'tim',
-            'foto'
-        ])
-    ]);
-}
 }

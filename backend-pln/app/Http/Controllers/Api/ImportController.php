@@ -112,133 +112,349 @@ class ImportController extends Controller
 }
 public function aset(Request $request)
 {
+    set_time_limit(300);
+    ini_set('memory_limit', '512M');
+
     if (!$request->hasFile('file')) {
         return response()->json([
-            'error' => 'File tidak ditemukan (key harus: file)'
+            'success' => false,
+            'message' => 'File tidak ditemukan. Pastikan key upload adalah file.'
         ], 422);
     }
 
-    $file = $request->file('file');
-    $rows = IOFactory::load($file->getPathname())
-        ->getActiveSheet()
-        ->toArray();
+    $request->validate([
+        'file' => 'required|file|mimes:xlsx,xls,csv|max:51200',
+    ]);
 
-    $gagal = [];
-    $sukses = 0;
+    try {
+        $file = $request->file('file');
 
-    foreach ($rows as $i => $row) {
-        if ($i === 0) continue;
+        $rows = IOFactory::load($file->getPathname())
+            ->getActiveSheet()
+            ->toArray();
 
-        $idpel = trim($row[0] ?? '');
+        $dataImport = [];
+        $idpelList = [];
+        $gagal = [];
 
-        if ($idpel === '') {
-            $gagal[] = ['baris' => $i + 1, 'alasan' => 'IDPEL kosong'];
-            continue;
-        }
+        foreach ($rows as $i => $row) {
+            if ($i === 0) {
+                continue;
+            }
 
-        $pelanggan = Pelanggan::where('idpel', $idpel)->first();
-        if (!$pelanggan) {
-            $gagal[] = [
+            $idpel = trim((string) ($row[0] ?? ''));
+            $nomorKwh = trim((string) ($row[1] ?? ''));
+            $merekKwh = trim((string) ($row[2] ?? ''));
+            $thteraKwh = trim((string) ($row[3] ?? ''));
+            $faktorKaliDil = $row[4] ?? null;
+            $tikorBaru = trim((string) ($row[5] ?? ''));
+
+            if (
+                $idpel === '' &&
+                $nomorKwh === '' &&
+                $merekKwh === '' &&
+                $thteraKwh === ''
+            ) {
+                continue;
+            }
+
+            if ($idpel === '') {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'alasan' => 'IDPEL kosong',
+                ];
+                continue;
+            }
+
+            if ($nomorKwh === '') {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'idpel' => $idpel,
+                    'alasan' => 'Nomor kWh kosong',
+                ];
+                continue;
+            }
+
+            $idpelList[] = $idpel;
+
+            $dataImport[] = [
                 'baris' => $i + 1,
                 'idpel' => $idpel,
-                'alasan' => 'Pelanggan tidak ditemukan'
+                'nomor_kwh' => $nomorKwh,
+                'merek_kwh' => strtoupper($merekKwh),
+                'thtera_kwh' => $thteraKwh,
+                'faktor_kali_dil' => is_numeric($faktorKaliDil) ? $faktorKaliDil : 0,
+                'tikor_baru' => $tikorBaru !== '' ? $tikorBaru : null,
             ];
-            continue;
         }
 
-        AsetAppTr::create([
-            'pelanggan_id'    => $pelanggan->id,
-            'nomor_kwh'       => trim($row[1] ?? ''),
-            'merek_kwh'        => trim($row[2] ?? ''),
-            'thtera_kwh'      => $row[3] ?? null,
-            'faktor_kali_dil' => $row[4] ?? null,
-            'tikor_baru'      => !empty($row[5]) ? trim($row[5]) : null,
+        $pelangganMap = Pelanggan::query()
+            ->whereIn('idpel', array_unique($idpelList))
+            ->pluck('id', 'idpel');
+
+        DB::beginTransaction();
+
+        $sukses = 0;
+
+        foreach ($dataImport as $item) {
+            $pelangganId = $pelangganMap[$item['idpel']] ?? null;
+
+            if (!$pelangganId) {
+                $gagal[] = [
+                    'baris' => $item['baris'],
+                    'idpel' => $item['idpel'],
+                    'alasan' => 'Pelanggan tidak ditemukan',
+                ];
+                continue;
+            }
+
+            AsetAppTr::updateOrCreate(
+                [
+                    'pelanggan_id' => $pelangganId,
+                ],
+                [
+                    'nomor_kwh' => $item['nomor_kwh'],
+                    'merek_kwh' => $item['merek_kwh'],
+                    'thtera_kwh' => $item['thtera_kwh'],
+                    'faktor_kali_dil' => $item['faktor_kali_dil'],
+                    'tikor_baru' => $item['tikor_baru'],
+                ]
+            );
+
+            $sukses++;
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Import aset selesai',
+            'sukses' => $sukses,
+            'gagal' => $gagal,
         ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
 
-        $sukses++;
+        return response()->json([
+            'success' => false,
+            'message' => 'Import aset gagal',
+            'error' => $e->getMessage(),
+            'line' => $e->getLine(),
+        ], 500);
     }
-
-    return response()->json([
-        'message' => 'Import aset selesai',
-        'sukses'  => $sukses,
-        'gagal'   => $gagal
-    ]);
 }
 
- public function tiket(Request $request)
+public function tiket(Request $request)
 {
+    set_time_limit(300);
+    ini_set('memory_limit', '512M');
+
     if (!$request->hasFile('file')) {
         return response()->json([
-            'error' => 'File tidak ditemukan (key harus: file)'
+            'success' => false,
+            'message' => 'File tidak ditemukan. Pastikan key upload adalah file.'
         ], 422);
     }
 
-    $rows = IOFactory::load(
-        $request->file('file')->getPathname()
-    )->getActiveSheet()->toArray();
-
-    $sukses = 0;
-    $gagal  = [];
-
-    foreach ($rows as $i => $row) {
-        if ($i === 0) continue;
-
-        $nomorKwh = trim($row[0] ?? '');
-        $idpel    = trim($row[1] ?? '');
-        $tanggal  = $this->parseTanggalExcel($row[2] ?? null);
-        $status   = trim($row[3] ?? 'tersedia');
-
-        $aset = null;
-
-        if ($nomorKwh !== '') {
-            $aset = AsetAppTr::with('pelanggan')
-                ->where('nomor_kwh', $nomorKwh)
-                ->first();
-        }
-
-        if (!$aset && $idpel !== '') {
-            $pelanggan = Pelanggan::with('aset')
-                ->where('idpel', $idpel)
-                ->first();
-
-            if ($pelanggan && $pelanggan->aset->count() === 1) {
-                $aset = $pelanggan->aset->first();
-            }
-        }
-
-        if (!$aset) {
-            $gagal[] = [
-                'baris'     => $i + 1,
-                'nomor_kwh' => $nomorKwh ?: null,
-                'idpel'     => $idpel ?: null,
-                'alasan'    => 'Aset tidak ditemukan atau lebih dari satu aset'
-            ];
-            continue;
-        }
-
-        $idpelTiket = $aset->pelanggan->idpel;
-
-        $jumlahTiket = TiketPekerjaan::whereHas('aset.pelanggan', function ($q) use ($idpelTiket) {
-            $q->where('idpel', $idpelTiket);
-        })->count();
-
-        $nomorTiket = "PKJ-{$idpelTiket}-" . ($jumlahTiket + 1);
-
-        TiketPekerjaan::create([
-            'aset_id'       => $aset->id,
-            'nomor_tiket'   => $nomorTiket,
-            'tanggal_tiket' => $tanggal,
-            'status'        => $status,
-        ]);
-
-        $sukses++;
-    }
-
-    return response()->json([
-        'message' => 'Import tiket pekerjaan selesai',
-        'sukses'  => $sukses,
-        'gagal'   => $gagal
+    $request->validate([
+        'file' => 'required|file|mimes:xlsx,xls,csv|max:51200',
     ]);
+
+    try {
+        $rows = IOFactory::load($request->file('file')->getPathname())
+            ->getActiveSheet()
+            ->toArray();
+
+        $allowedStatuses = [
+            'tersedia',
+            'berjalan',
+            'dikerjakan',
+            'inReview',
+            'menungguValidasi',
+            'selesai',
+        ];
+
+        $dataImport = [];
+        $nomorKwhList = [];
+        $idpelList = [];
+        $gagal = [];
+
+        foreach ($rows as $i => $row) {
+            if ($i === 0) {
+                continue;
+            }
+
+            $nomorKwh = trim((string) ($row[0] ?? ''));
+            $idpel = trim((string) ($row[1] ?? ''));
+            $tanggal = $this->parseTanggalExcel($row[2] ?? null) ?: now()->toDateString();
+            $status = trim((string) ($row[3] ?? 'tersedia'));
+
+            if ($nomorKwh === '' && $idpel === '') {
+                continue;
+            }
+
+            if (!in_array($status, $allowedStatuses)) {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'nomor_kwh' => $nomorKwh ?: null,
+                    'idpel' => $idpel ?: null,
+                    'alasan' => "Status tidak valid: {$status}",
+                ];
+                continue;
+            }
+
+            if ($nomorKwh !== '') {
+                $nomorKwhList[] = $nomorKwh;
+            }
+
+            if ($idpel !== '') {
+                $idpelList[] = $idpel;
+            }
+
+            $dataImport[] = [
+                'baris' => $i + 1,
+                'nomor_kwh' => $nomorKwh,
+                'idpel' => $idpel,
+                'tanggal' => $tanggal,
+                'status' => $status,
+            ];
+        }
+
+        $nomorKwhList = array_unique($nomorKwhList);
+        $idpelList = array_unique($idpelList);
+
+        $asetQuery = AsetAppTr::query()
+            ->with('pelanggan:id,idpel,nama_pelanggan');
+
+        $asetQuery->where(function ($query) use ($nomorKwhList, $idpelList) {
+            $hasNomorKwh = !empty($nomorKwhList);
+            $hasIdpel = !empty($idpelList);
+
+            if ($hasNomorKwh) {
+                $query->whereIn('nomor_kwh', $nomorKwhList);
+            }
+
+            if ($hasIdpel) {
+                if ($hasNomorKwh) {
+                    $query->orWhereHas('pelanggan', function ($q) use ($idpelList) {
+                        $q->whereIn('idpel', $idpelList);
+                    });
+                } else {
+                    $query->whereHas('pelanggan', function ($q) use ($idpelList) {
+                        $q->whereIn('idpel', $idpelList);
+                    });
+                }
+            }
+        });
+
+        $asetCollection = $asetQuery->get();
+
+        $asetByNomorKwh = $asetCollection
+            ->filter(fn ($aset) => $aset->nomor_kwh)
+            ->keyBy(fn ($aset) => trim((string) $aset->nomor_kwh));
+
+        $asetByIdpel = $asetCollection
+            ->filter(fn ($aset) => $aset->pelanggan)
+            ->groupBy(fn ($aset) => $aset->pelanggan->idpel);
+
+        $asetIds = $asetCollection->pluck('id')->values();
+
+        $existingCounts = TiketPekerjaan::query()
+            ->whereIn('aset_id', $asetIds)
+            ->select('aset_id', DB::raw('COUNT(*) as total'))
+            ->groupBy('aset_id')
+            ->pluck('total', 'aset_id')
+            ->toArray();
+
+        $existingTiketByKey = TiketPekerjaan::query()
+            ->whereIn('aset_id', $asetIds)
+            ->get()
+            ->keyBy(fn ($tiket) => $tiket->aset_id . '|' . $tiket->tanggal_tiket);
+
+        DB::beginTransaction();
+
+        $sukses = 0;
+
+        foreach ($dataImport as $item) {
+            $aset = null;
+
+            if ($item['nomor_kwh'] !== '' && $asetByNomorKwh->has($item['nomor_kwh'])) {
+                $aset = $asetByNomorKwh->get($item['nomor_kwh']);
+            }
+
+            if (!$aset && $item['idpel'] !== '') {
+                $asetGroup = $asetByIdpel->get($item['idpel']);
+
+                if ($asetGroup && $asetGroup->count() === 1) {
+                    $aset = $asetGroup->first();
+                } elseif ($asetGroup && $asetGroup->count() > 1) {
+                    $gagal[] = [
+                        'baris' => $item['baris'],
+                        'nomor_kwh' => $item['nomor_kwh'] ?: null,
+                        'idpel' => $item['idpel'],
+                        'alasan' => 'IDPEL memiliki lebih dari satu aset. Isi nomor kWh agar tidak ambigu.',
+                    ];
+                    continue;
+                }
+            }
+
+            if (!$aset) {
+                $gagal[] = [
+                    'baris' => $item['baris'],
+                    'nomor_kwh' => $item['nomor_kwh'] ?: null,
+                    'idpel' => $item['idpel'] ?: null,
+                    'alasan' => 'Aset tidak ditemukan',
+                ];
+                continue;
+            }
+
+            $key = $aset->id . '|' . $item['tanggal'];
+
+            if ($existingTiketByKey->has($key)) {
+                $nomorTiket = $existingTiketByKey->get($key)->nomor_tiket;
+            } else {
+                $idpelTiket = $aset->pelanggan?->idpel ?: $item['idpel'];
+
+                $nextNumber = ((int) ($existingCounts[$aset->id] ?? 0)) + 1;
+                $existingCounts[$aset->id] = $nextNumber;
+
+                $nomorTiket = "PKJ-{$idpelTiket}-{$nextNumber}";
+            }
+
+            $tiket = TiketPekerjaan::updateOrCreate(
+                [
+                    'aset_id' => $aset->id,
+                    'tanggal_tiket' => $item['tanggal'],
+                ],
+                [
+                    'nomor_tiket' => $nomorTiket,
+                    'status' => $item['status'],
+                ]
+            );
+
+            $existingTiketByKey->put($key, $tiket);
+
+            $sukses++;
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Import tiket pekerjaan selesai',
+            'sukses' => $sukses,
+            'gagal' => $gagal,
+        ]);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Import tiket pekerjaan gagal',
+            'error' => $e->getMessage(),
+            'line' => $e->getLine(),
+        ], 500);
+    }
 }
 
 private function parseTanggalExcel($value)

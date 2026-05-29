@@ -269,7 +269,7 @@ function HeroPanel({
                                 variant="light"
                                 className="fw-bold rounded-pill shadow-sm py-2"
                                 style={{ color: PLN_BLUE }}
-                                onClick={fetchData}
+                                onClick={() => fetchData(1)}
                                 disabled={loading}
                             >
                                 {loading ? <Spinner animation="border" size="sm" /> : 'Refresh'}
@@ -418,6 +418,18 @@ export default function DashboardAdmin() {
 
     const [loading, setLoading] = useState(true);
     const [pekerjaanData, setPekerjaanData] = useState([]);
+    const [meta, setMeta] = useState(null);
+    const [serverStatistik, setServerStatistik] = useState({
+        total: 0,
+        inReview: 0,
+        menungguValidasi: 0,
+        selesai: 0,
+        status_counts: {
+            inReview: 0,
+            menungguValidasi: 0,
+            selesai: 0,
+        },
+    });
     const [filterStatus, setFilterStatus] = useState('inReview');
     const [searchTerm, setSearchTerm] = useState('');
 
@@ -428,28 +440,35 @@ export default function DashboardAdmin() {
         isSuccess: true,
     });
 
-    useEffect(() => {
-        fetchData();
-    }, []);
 
-    const fetchData = async () => {
+    const fetchData = async (page = 1) => {
         try {
             setLoading(true);
 
-            const responses = await Promise.all(
-                STATUS_OPTIONS.map((option) =>
-                    api.get('/admin/pekerjaan-review', {
-                        params: { status: option.key },
-                    })
-                )
-            );
-
-            const merged = responses.flatMap((response) => {
-                const data = response.data.data || response.data || [];
-                return Array.isArray(data) ? data : [];
+            const response = await api.get('/admin/pekerjaan-review', {
+                params: {
+                    status: filterStatus,
+                    search: searchTerm,
+                    page,
+                    per_page: 10,
+                },
             });
 
-            setPekerjaanData(merged);
+            const data = response.data.data || [];
+
+            setPekerjaanData(Array.isArray(data) ? data : []);
+            setMeta(response.data.meta || null);
+            setServerStatistik(response.data.statistik || {
+                total: 0,
+                inReview: 0,
+                menungguValidasi: 0,
+                selesai: 0,
+                status_counts: {
+                    inReview: 0,
+                    menungguValidasi: 0,
+                    selesai: 0,
+                },
+            });
         } catch (error) {
             console.error('Gagal memuat data admin review:', error.response?.data || error);
 
@@ -464,67 +483,45 @@ export default function DashboardAdmin() {
         }
     };
 
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            fetchData(1);
+        }, 400);
+
+        return () => clearTimeout(timer);
+
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterStatus, searchTerm]);
+
+
     const handleLogout = () => {
         localStorage.clear();
         navigate('/login');
     };
 
     const statistik = useMemo(() => {
-        const countByStatus = (status) =>
-            pekerjaanData.filter((item) => item.tiket?.status === status).length;
-
         return {
-            total: pekerjaanData.length,
-            inReview: countByStatus('inReview'),
-            menungguValidasi: countByStatus('menungguValidasi'),
-            selesai: countByStatus('selesai'),
+            total: serverStatistik.total || 0,
+            inReview: serverStatistik.inReview || 0,
+            menungguValidasi: serverStatistik.menungguValidasi || 0,
+            selesai: serverStatistik.selesai || 0,
         };
-    }, [pekerjaanData]);
+    }, [serverStatistik]);
 
-    const statusCounts = useMemo(() => {
-        return STATUS_OPTIONS.reduce((result, option) => {
-            result[option.key] = pekerjaanData.filter((item) => item.tiket?.status === option.key).length;
-            return result;
-        }, {});
-    }, [pekerjaanData]);
+    const statusCounts = serverStatistik.status_counts || {
+        inReview: 0,
+        menungguValidasi: 0,
+        selesai: 0,
+    };
 
-    const filteredData = useMemo(() => {
-        let result = [...pekerjaanData];
+    const filteredData = pekerjaanData;
 
-        result = result.filter((item) => item.tiket?.status === filterStatus);
-
-        const keyword = searchTerm.trim().toLowerCase();
-
-        if (keyword) {
-            result = result.filter((item) => {
-                const data = getPekerjaanViewData(item);
-
-                const searchable = [
-                    data.namaPelanggan,
-                    data.idpel,
-                    data.alamat,
-                    data.nomorTiket,
-                    data.namaTim,
-                    data.namaPetugas,
-                    data.rekomendasi,
-                    data.catatanCt,
-                    data.status,
-                ]
-                    .filter(Boolean)
-                    .join(' ')
-                    .toLowerCase();
-
-                return searchable.includes(keyword);
-            });
-        }
-
-        return result;
-    }, [pekerjaanData, filterStatus, searchTerm]);
+    const totalDitemukan = meta?.total ?? filteredData.length;
 
     const activeStatusLabel =
         STATUS_OPTIONS.find((option) => option.key === filterStatus)?.label || 'Menunggu Review';
 
-    const isFiltered = searchTerm.trim() !== '';
+    const isFiltered = searchTerm.trim() !== '' || filterStatus !== 'inReview';
 
     return (
         <div className="min-vh-100 bg-light py-3 py-lg-4">
@@ -726,7 +723,7 @@ export default function DashboardAdmin() {
                         </h4>
 
                         <div className="small text-muted">
-                            Ditemukan <span className="fw-bold text-dark">{filteredData.length}</span> laporan pada filter ini
+                            Ditemukan <span className="fw-bold text-dark">{totalDitemukan}</span> laporan pada filter ini
                         </div>
                     </div>
 
@@ -734,9 +731,12 @@ export default function DashboardAdmin() {
                         <Button
                             variant="light"
                             className="rounded-pill fw-bold border shadow-sm px-4"
-                            onClick={() => setSearchTerm('')}
+                            onClick={() => {
+                                setSearchTerm('');
+                                setFilterStatus('inReview');
+                            }}
                         >
-                            Bersihkan Pencarian
+                            Bersihkan Filter
                         </Button>
                     )}
                 </div>
@@ -754,6 +754,32 @@ export default function DashboardAdmin() {
                                 onDetail={(id) => navigate(`/admin/review/${id}`)}
                             />
                         ))}
+
+                        {meta && meta.last_page > 1 && (
+                            <div className="d-flex justify-content-center align-items-center gap-2 mt-4">
+                                <Button
+                                    variant="light"
+                                    className="rounded-pill fw-bold border shadow-sm px-4"
+                                    disabled={loading || meta.current_page <= 1}
+                                    onClick={() => fetchData(meta.current_page - 1)}
+                                >
+                                    Sebelumnya
+                                </Button>
+
+                                <Badge bg="light" text="dark" className="rounded-pill px-3 py-2 border">
+                                    Halaman {meta.current_page} / {meta.last_page}
+                                </Badge>
+
+                                <Button
+                                    variant="light"
+                                    className="rounded-pill fw-bold border shadow-sm px-4"
+                                    disabled={loading || meta.current_page >= meta.last_page}
+                                    onClick={() => fetchData(meta.current_page + 1)}
+                                >
+                                    Berikutnya
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
             </Container>

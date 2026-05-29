@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-    Alert,
+import { useCallback, useEffect, useState } from 'react'; import {
     Badge,
     Button,
     Card,
@@ -72,26 +70,6 @@ function getAsetLabel(aset) {
     return `${nama} - IDPEL ${idpel} - Nomor kWh ${nomorKwh}`;
 }
 
-function generateNomorTiket(asetId, asetData, tiketData) {
-    const asetTerpilih = asetData.find((aset) => String(aset.id) === String(asetId));
-    const idpel = asetTerpilih?.pelanggan?.idpel;
-
-    if (!idpel) return '';
-
-    const prefix = `PKJ-${idpel}-`;
-
-    const nomorUrutTerakhir = tiketData
-        .filter((tiket) => tiket.nomor_tiket?.startsWith(prefix))
-        .map((tiket) => {
-            const nomorAkhir = tiket.nomor_tiket.replace(prefix, '');
-            return Number(nomorAkhir);
-        })
-        .filter((nomor) => !Number.isNaN(nomor))
-        .sort((a, b) => b - a)[0] || 0;
-
-    return `${prefix}${nomorUrutTerakhir + 1}`;
-}
-
 function NotificationModal({ modalNotif, onClose }) {
     return (
         <Modal show={modalNotif.show} onHide={onClose} centered size="sm">
@@ -125,10 +103,28 @@ export default function AdminTiket() {
     const [saving, setSaving] = useState(false);
 
     const [tiketData, setTiketData] = useState([]);
-    const [asetData, setAsetData] = useState([]);
+    const [asetOptions, setAsetOptions] = useState([]);
+
+    const [meta, setMeta] = useState(null);
+    const [serverStatistik, setServerStatistik] = useState({
+        total_tiket: 0,
+        total_filter: 0,
+        status_counts: {
+            semua: 0,
+            tersedia: 0,
+            berjalan: 0,
+            dikerjakan: 0,
+            inReview: 0,
+            menungguValidasi: 0,
+            selesai: 0,
+        },
+    });
 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('semua');
+
+    const [searchAset, setSearchAset] = useState('');
+    const [loadingAset, setLoadingAset] = useState(false);
 
     const [showFormModal, setShowFormModal] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -151,20 +147,36 @@ export default function AdminTiket() {
         isSuccess: true,
     });
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (page = 1) => {
         try {
             setLoading(true);
 
-            const [tiketResponse, asetResponse] = await Promise.all([
-                api.get('/admin/tiket'),
-                api.get('/aset'),
-            ]);
+            const response = await api.get('/admin/tiket', {
+                params: {
+                    status: filterStatus,
+                    search: searchTerm,
+                    page,
+                    per_page: 10,
+                },
+            });
 
-            const tiket = tiketResponse.data.data || tiketResponse.data || [];
-            const aset = asetResponse.data.data || asetResponse.data || [];
+            const data = response.data.data || [];
 
-            setTiketData(Array.isArray(tiket) ? tiket : []);
-            setAsetData(Array.isArray(aset) ? aset : []);
+            setTiketData(Array.isArray(data) ? data : []);
+            setMeta(response.data.meta || null);
+            setServerStatistik(response.data.statistik || {
+                total_tiket: 0,
+                total_filter: 0,
+                status_counts: {
+                    semua: 0,
+                    tersedia: 0,
+                    berjalan: 0,
+                    dikerjakan: 0,
+                    inReview: 0,
+                    menungguValidasi: 0,
+                    selesai: 0,
+                },
+            });
         } catch (error) {
             console.error('Gagal memuat data tiket:', error.response?.data || error);
 
@@ -177,10 +189,43 @@ export default function AdminTiket() {
         } finally {
             setLoading(false);
         }
+    }, [filterStatus, searchTerm]);
+
+    const fetchAsetOptions = useCallback(async (keyword = '') => {
+        try {
+            setLoadingAset(true);
+
+            const response = await api.get('/aset', {
+                params: {
+                    search: keyword,
+                    page: 1,
+                    per_page: 25,
+                },
+            });
+
+            const data = response.data.data || [];
+
+            setAsetOptions(Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error('Gagal memuat pilihan aset:', error.response?.data || error);
+
+            setModalNotif({
+                show: true,
+                title: 'Gagal Memuat Aset',
+                message: error.response?.data?.message || 'Pilihan aset gagal dimuat.',
+                isSuccess: false,
+            });
+        } finally {
+            setLoadingAset(false);
+        }
     }, []);
 
     useEffect(() => {
-        fetchData();
+        const timer = setTimeout(() => {
+            fetchData(1);
+        }, 400);
+
+        return () => clearTimeout(timer);
     }, [fetchData]);
 
     const resetForm = () => {
@@ -194,9 +239,11 @@ export default function AdminTiket() {
         });
     };
 
-    const openCreateModal = () => {
+    const openCreateModal = async () => {
         resetForm();
+        setSearchAset('');
         setShowFormModal(true);
+        await fetchAsetOptions('');
     };
 
     const openEditModal = (item) => {
@@ -210,6 +257,7 @@ export default function AdminTiket() {
             tim_id: item.tim_id || '',
         });
 
+        setAsetOptions(item.aset ? [item.aset] : []);
         setShowFormModal(true);
     };
 
@@ -217,7 +265,12 @@ export default function AdminTiket() {
         const { name, value } = event.target;
 
         if (name === 'aset_id' && !editData) {
-            const nomorTiketBaru = generateNomorTiket(value, asetData, tiketData);
+            const asetTerpilih = asetOptions.find((aset) => String(aset.id) === String(value));
+            const idpel = asetTerpilih?.pelanggan?.idpel;
+
+            const nomorTiketBaru = idpel
+                ? `PKJ-${idpel}-${Date.now().toString().slice(-6)}`
+                : '';
 
             setFormData((prev) => ({
                 ...prev,
@@ -265,7 +318,7 @@ export default function AdminTiket() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menyimpan tiket:', error.response?.data || error);
 
@@ -310,7 +363,7 @@ export default function AdminTiket() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menghapus tiket:', error.response?.data || error);
 
@@ -325,54 +378,22 @@ export default function AdminTiket() {
         }
     };
 
-    const filteredData = useMemo(() => {
-        let result = [...tiketData];
+    const filteredData = tiketData;
 
-        if (filterStatus !== 'semua') {
-            result = result.filter((item) => item.status === filterStatus);
-        }
+    const statusCounts = serverStatistik.status_counts || {};
 
-        const keyword = searchTerm.trim().toLowerCase();
+    const statistik = {
+        total: serverStatistik.total_tiket || meta?.total || filteredData.length,
+        tersedia: statusCounts.tersedia || 0,
+        berjalan: statusCounts.berjalan || 0,
+        dikerjakan: statusCounts.dikerjakan || 0,
+        inReview: statusCounts.inReview || 0,
+        menungguValidasi: statusCounts.menungguValidasi || 0,
+        selesai: statusCounts.selesai || 0,
+    };
 
-        if (keyword) {
-            result = result.filter((item) => {
-                const pelanggan = item.aset?.pelanggan;
-
-                const searchable = [
-                    item.nomor_tiket,
-                    item.status,
-                    item.tanggal_tiket,
-                    pelanggan?.nama_pelanggan,
-                    pelanggan?.idpel,
-                    pelanggan?.alamat_pelanggan,
-                    item.aset?.nomor_kwh,
-                    item.aset?.merek_kwh,
-                ]
-                    .filter(Boolean)
-                    .join(' ')
-                    .toLowerCase();
-
-                return searchable.includes(keyword);
-            });
-        }
-
-        return result.sort((a, b) => Number(a.id) - Number(b.id));
-    }, [tiketData, filterStatus, searchTerm]);
-
-    const statistik = useMemo(() => {
-        const countByStatus = (status) =>
-            tiketData.filter((item) => item.status === status).length;
-
-        return {
-            total: tiketData.length,
-            tersedia: countByStatus('tersedia'),
-            berjalan: countByStatus('berjalan'),
-            dikerjakan: countByStatus('dikerjakan'),
-            inReview: countByStatus('inReview'),
-            menungguValidasi: countByStatus('menungguValidasi'),
-            selesai: countByStatus('selesai'),
-        };
-    }, [tiketData]);
+    const totalFilter = meta?.total ?? serverStatistik.total_filter ?? filteredData.length;
+    const jumlahDitampilkan = filteredData.length;
 
     return (
         <div className="min-vh-100 bg-light py-3 py-lg-4">
@@ -436,9 +457,9 @@ export default function AdminTiket() {
 
                         <Button
                             variant="light"
-                            className="rounded-pill fw-bold border"
-                            onClick={closeDeleteModal}
-                            disabled={deleting}
+                            className="rounded-pill fw-bold px-4 border"
+                            onClick={() => setShowFormModal(false)}
+                            disabled={saving}
                         >
                             Batal
                         </Button>
@@ -467,19 +488,54 @@ export default function AdminTiket() {
                                         Aset / Pelanggan
                                     </Form.Label>
 
+                                    {!editData && (
+                                        <InputGroup className="mb-2">
+                                            <InputGroup.Text className="bg-light border-0">
+                                                🔎
+                                            </InputGroup.Text>
+
+                                            <Form.Control
+                                                className="bg-light border-0"
+                                                placeholder="Cari IDPEL / nama / nomor kWh..."
+                                                value={searchAset}
+                                                onChange={async (event) => {
+                                                    const value = event.target.value;
+                                                    setSearchAset(value);
+                                                    await fetchAsetOptions(value);
+                                                }}
+                                            />
+                                        </InputGroup>
+                                    )}
+
                                     <Form.Select
                                         name="aset_id"
                                         value={formData.aset_id}
                                         onChange={handleChange}
                                         required
+                                        disabled={Boolean(editData) || loadingAset}
                                     >
-                                        <option value="">Pilih aset pelanggan</option>
-                                        {asetData.map((aset) => (
+                                        <option value="">
+                                            {loadingAset ? 'Memuat aset...' : 'Pilih aset pelanggan'}
+                                        </option>
+
+                                        {asetOptions.map((aset) => (
                                             <option key={aset.id} value={aset.id}>
                                                 {getAsetLabel(aset)}
                                             </option>
                                         ))}
                                     </Form.Select>
+
+                                    {!editData && asetOptions.length === 0 && !loadingAset && (
+                                        <div className="small text-danger mt-1">
+                                            Tidak ada aset ditemukan. Coba cari IDPEL, nama pelanggan, atau nomor kWh.
+                                        </div>
+                                    )}
+
+                                    {editData && (
+                                        <div className="small text-muted mt-1">
+                                            Aset tidak diubah saat edit tiket agar relasi pekerjaan tetap aman.
+                                        </div>
+                                    )}
                                 </Form.Group>
                             </Col>
 
@@ -566,7 +622,7 @@ export default function AdminTiket() {
                         <Button
                             variant="light"
                             className="rounded-pill fw-bold px-4 border"
-                            onClick={() => setShowFormModal(false)}
+                            onClick={() => fetchData(1)}
                             disabled={saving}
                         >
                             Batal
@@ -645,10 +701,25 @@ export default function AdminTiket() {
                                 </div>
                             </Col>
 
+
                             <Col xs={6} md={3} xl>
                                 <div className="border-start border-light border-opacity-25 ps-3">
                                     <div className="small text-white-50">Tersedia</div>
                                     <div className="display-6 fw-bold mb-0">{statistik.tersedia}</div>
+                                </div>
+                            </Col>
+
+                            <Col xs={6} md={3} xl>
+                                <div className="border-start border-light border-opacity-25 ps-3">
+                                    <div className="small text-white-50">Hasil Filter</div>
+                                    <div className="display-6 fw-bold mb-0">{totalFilter}</div>
+                                </div>
+                            </Col>
+
+                            <Col xs={6} md={3} xl>
+                                <div className="border-start border-light border-opacity-25 ps-3">
+                                    <div className="small text-white-50">Ditampilkan</div>
+                                    <div className="display-6 fw-bold mb-0">{jumlahDitampilkan}</div>
                                 </div>
                             </Col>
 
@@ -672,6 +743,8 @@ export default function AdminTiket() {
                                     <div className="display-6 fw-bold mb-0">{statistik.selesai}</div>
                                 </div>
                             </Col>
+
+
                         </Row>
                     </Card.Body>
                 </Card>
@@ -707,7 +780,7 @@ export default function AdminTiket() {
                                 <Button
                                     variant="outline-secondary"
                                     className="w-100 rounded-pill fw-bold"
-                                    onClick={fetchData}
+                                    onClick={() => fetchData(1)}
                                     disabled={loading}
                                 >
                                     {loading ? 'Memuat...' : 'Refresh'}
@@ -715,23 +788,43 @@ export default function AdminTiket() {
                             </Col>
                         </Row>
 
-                        <div className="d-flex gap-2 overflow-auto pt-3 mt-3 border-top">
-                            {STATUS_OPTIONS.map((status) => (
-                                <Button
-                                    key={status.key}
-                                    size="sm"
-                                    className="rounded-pill fw-bold px-3 flex-shrink-0"
-                                    variant={filterStatus === status.key ? 'primary' : 'light'}
-                                    style={
-                                        filterStatus === status.key
-                                            ? { backgroundColor: PLN_BLUE, border: 'none' }
-                                            : { border: '1px solid #dee2e6' }
-                                    }
-                                    onClick={() => setFilterStatus(status.key)}
-                                >
-                                    {status.label}
-                                </Button>
-                            ))}
+                        <div className="d-flex gap-2 overflow-auto pt-3 mt-3 border-top pb-1">
+                            {STATUS_OPTIONS.map((status) => {
+                                const isActive = filterStatus === status.key;
+
+                                return (
+                                    <Button
+                                        key={status.key}
+                                        size="sm"
+                                        className="rounded-pill fw-bold px-3 flex-shrink-0 d-flex align-items-center gap-2"
+                                        variant={isActive ? 'primary' : 'light'}
+                                        style={
+                                            isActive
+                                                ? {
+                                                    backgroundColor: PLN_BLUE,
+                                                    border: 'none',
+                                                    minWidth: 'fit-content',
+                                                }
+                                                : {
+                                                    border: '1px solid #dee2e6',
+                                                    minWidth: 'fit-content',
+                                                }
+                                        }
+                                        onClick={() => setFilterStatus(status.key)}
+                                    >
+                                        <span>{status.label}</span>
+
+                                        <Badge
+                                            bg={isActive ? 'light' : 'secondary'}
+                                            text={isActive ? 'dark' : undefined}
+                                            pill
+                                            className="px-2"
+                                        >
+                                            {statusCounts[status.key] || 0}
+                                        </Badge>
+                                    </Button>
+                                );
+                            })}
                         </div>
                     </Card.Body>
                 </Card>
@@ -753,100 +846,203 @@ export default function AdminTiket() {
                                 </div>
                             </div>
                         ) : (
-                            <div className="table-responsive">
-                                <Table hover className="align-middle mb-0">
-                                    <thead className="table-light">
-                                        <tr>
-                                            <th className="ps-4">Tiket</th>
-                                            <th>Pelanggan</th>
-                                            <th>IDPEL</th>
-                                            <th>Aset</th>
-                                            <th>Tanggal</th>
-                                            <th>Status</th>
-                                            <th className="text-end pe-4">Aksi</th>
-                                        </tr>
-                                    </thead>
+                            <>
+                                <div
+                                    className="table-responsive"
+                                    style={{
+                                        maxHeight: '68vh',
+                                        overflow: 'auto',
+                                        borderRadius: 16,
+                                    }}
+                                >
+                                    <Table
+                                        hover
+                                        className="align-middle mb-0"
+                                        style={{
+                                            minWidth: 1300,
+                                            fontSize: '0.875rem',
+                                        }}
+                                    >
+                                        <thead
+                                            className="table-light"
+                                            style={{
+                                                position: 'sticky',
+                                                top: 0,
+                                                zIndex: 2,
+                                            }}
+                                        >
+                                            <tr>
+                                                <th className="ps-4" style={{ width: 230 }}>
+                                                    Tiket
+                                                </th>
 
-                                    <tbody>
-                                        {filteredData.map((item) => {
-                                            const pelanggan = item.aset?.pelanggan;
-                                            const statusInfo = getStatusInfo(item.status);
+                                                <th style={{ width: 260 }}>
+                                                    Pelanggan
+                                                </th>
 
-                                            return (
-                                                <tr key={item.id}>
-                                                    <td className="ps-4">
-                                                        <div className="fw-bold" style={{ color: PLN_BLUE }}>
-                                                            {item.nomor_tiket || '-'}
-                                                        </div>
-                                                        <div className="small text-muted">
-                                                            ID #{item.id}
-                                                        </div>
-                                                    </td>
+                                                <th style={{ width: 150 }}>
+                                                    IDPEL
+                                                </th>
 
-                                                    <td>
-                                                        <div className="fw-semibold">
-                                                            {pelanggan?.nama_pelanggan || '-'}
-                                                        </div>
-                                                        <div className="small text-muted text-truncate" style={{ maxWidth: 260 }}>
-                                                            {pelanggan?.alamat_pelanggan || '-'}
-                                                        </div>
-                                                    </td>
+                                                <th style={{ width: 240 }}>
+                                                    Aset
+                                                </th>
 
-                                                    <td className="fw-semibold">
-                                                        {pelanggan?.idpel || '-'}
-                                                    </td>
+                                                <th style={{ width: 130 }}>
+                                                    Tanggal
+                                                </th>
 
-                                                    <td>
-                                                        <div className="small">
-                                                            Nomor kWh: <span className="fw-bold">{item.aset?.nomor_kwh || '-'}</span>
-                                                        </div>
-                                                        <div className="small text-muted">
-                                                            {item.aset?.merek_kwh || '-'} • {item.aset?.thtera_kwh || '-'}
-                                                        </div>
-                                                    </td>
+                                                <th style={{ width: 160 }}>
+                                                    Status
+                                                </th>
 
-                                                    <td>
-                                                        {formatTanggal(item.tanggal_tiket)}
-                                                    </td>
+                                                <th
+                                                    className="text-end pe-4 bg-light"
+                                                    style={{
+                                                        width: 150,
+                                                        position: 'sticky',
+                                                        right: 0,
+                                                        zIndex: 3,
+                                                        boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.06)',
+                                                    }}
+                                                >
+                                                    Aksi
+                                                </th>
+                                            </tr>
+                                        </thead>
 
-                                                    <td>
-                                                        <Badge
-                                                            bg={statusInfo.badge}
-                                                            text={statusInfo.text}
-                                                            className="rounded-pill px-3 py-2"
+                                        <tbody>
+                                            {filteredData.map((item) => {
+                                                const pelanggan = item.aset?.pelanggan;
+                                                const statusInfo = getStatusInfo(item.status);
+
+                                                return (
+                                                    <tr key={item.id}>
+                                                        <td className="ps-4">
+                                                            <div className="fw-bold" style={{ color: PLN_BLUE }}>
+                                                                {item.nomor_tiket || '-'}
+                                                            </div>
+
+                                                            <div className="small text-muted">
+                                                                ID #{item.id}
+                                                            </div>
+                                                        </td>
+
+                                                        <td>
+                                                            <div
+                                                                className="fw-semibold text-truncate"
+                                                                title={pelanggan?.nama_pelanggan || '-'}
+                                                                style={{ maxWidth: 240 }}
+                                                            >
+                                                                {pelanggan?.nama_pelanggan || '-'}
+                                                            </div>
+
+                                                            <div
+                                                                className="small text-muted text-truncate"
+                                                                title={pelanggan?.alamat_pelanggan || '-'}
+                                                                style={{ maxWidth: 240 }}
+                                                            >
+                                                                {pelanggan?.alamat_pelanggan || '-'}
+                                                            </div>
+                                                        </td>
+
+                                                        <td className="fw-semibold">
+                                                            {pelanggan?.idpel || '-'}
+                                                        </td>
+
+                                                        <td>
+                                                            <div className="small">
+                                                                Nomor kWh:{' '}
+                                                                <span className="fw-bold">
+                                                                    {item.aset?.nomor_kwh || '-'}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="small text-muted">
+                                                                {item.aset?.merek_kwh || '-'} • {item.aset?.thtera_kwh || '-'}
+                                                            </div>
+                                                        </td>
+
+                                                        <td>
+                                                            {formatTanggal(item.tanggal_tiket)}
+                                                        </td>
+
+                                                        <td>
+                                                            <Badge
+                                                                bg={statusInfo.badge}
+                                                                text={statusInfo.text}
+                                                                className="rounded-pill px-3 py-2"
+                                                            >
+                                                                {statusInfo.label}
+                                                            </Badge>
+                                                        </td>
+
+                                                        <td
+                                                            className="text-end pe-4 bg-white"
+                                                            style={{
+                                                                position: 'sticky',
+                                                                right: 0,
+                                                                zIndex: 1,
+                                                                boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.04)',
+                                                            }}
                                                         >
-                                                            {statusInfo.label}
-                                                        </Badge>
-                                                    </td>
+                                                            <div className="d-flex justify-content-end gap-2">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline-primary"
+                                                                    className="rounded-pill fw-bold px-3"
+                                                                    style={{
+                                                                        color: PLN_BLUE,
+                                                                        borderColor: PLN_BLUE,
+                                                                    }}
+                                                                    onClick={() => openEditModal(item)}
+                                                                >
+                                                                    Edit
+                                                                </Button>
 
-                                                    <td className="text-end pe-4">
-                                                        <div className="d-flex justify-content-end gap-2">
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline-primary"
-                                                                className="rounded-pill fw-bold"
-                                                                style={{ color: PLN_BLUE, borderColor: PLN_BLUE }}
-                                                                onClick={() => openEditModal(item)}
-                                                            >
-                                                                Edit
-                                                            </Button>
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline-danger"
+                                                                    className="rounded-pill fw-bold px-3"
+                                                                    onClick={() => openDeleteModal(item)}
+                                                                >
+                                                                    Hapus
+                                                                </Button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </Table>
+                                </div>
 
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline-danger"
-                                                                className="rounded-pill fw-bold"
-                                                                onClick={() => openDeleteModal(item)}
-                                                            >
-                                                                Hapus
-                                                            </Button>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </Table>
-                            </div>
+                                {meta && meta.last_page > 1 && (
+                                    <div className="d-flex justify-content-center align-items-center gap-2 p-3 border-top">
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page <= 1}
+                                            onClick={() => fetchData(meta.current_page - 1)}
+                                        >
+                                            Sebelumnya
+                                        </Button>
+
+                                        <Badge bg="light" text="dark" className="rounded-pill px-3 py-2 border">
+                                            Halaman {meta.current_page} / {meta.last_page}
+                                        </Badge>
+
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page >= meta.last_page}
+                                            onClick={() => fetchData(meta.current_page + 1)}
+                                        >
+                                            Berikutnya
+                                        </Button>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </Card.Body>
                 </Card>

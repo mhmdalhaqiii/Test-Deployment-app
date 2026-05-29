@@ -52,6 +52,18 @@ export default function AdminPelanggan() {
     const [deleting, setDeleting] = useState(false);
 
     const [pelangganData, setPelangganData] = useState([]);
+    const [meta, setMeta] = useState(null);
+
+    const [statistik, setStatistik] = useState({
+        total_pelanggan: 0,
+        total_filter: 0,
+    });
+
+    const [filterOptions, setFilterOptions] = useState({
+        tarif_options: [],
+        unitup_options: [],
+    });
+
     const [searchTerm, setSearchTerm] = useState('');
 
     const [showFormModal, setShowFormModal] = useState(false);
@@ -77,14 +89,32 @@ export default function AdminPelanggan() {
         isSuccess: true,
     });
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (page = 1) => {
         try {
             setLoading(true);
 
-            const response = await api.get('/pelanggan');
-            const data = response.data.data || response.data || [];
+            const response = await api.get('/pelanggan', {
+                params: {
+                    search: searchTerm,
+                    page,
+                    per_page: 10,
+                },
+            });
+
+            const data = response.data.data || [];
 
             setPelangganData(Array.isArray(data) ? data : []);
+            setMeta(response.data.meta || null);
+
+            setStatistik(response.data.statistik || {
+                total_pelanggan: 0,
+                total_filter: 0,
+            });
+
+            setFilterOptions(response.data.filters || {
+                tarif_options: [],
+                unitup_options: [],
+            });
         } catch (error) {
             console.error('Gagal memuat pelanggan:', error.response?.data || error);
 
@@ -97,10 +127,14 @@ export default function AdminPelanggan() {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [searchTerm]);
 
     useEffect(() => {
-        fetchData();
+        const timer = setTimeout(() => {
+            fetchData(1);
+        }, 400);
+
+        return () => clearTimeout(timer);
     }, [fetchData]);
 
     const resetForm = () => {
@@ -180,7 +214,7 @@ export default function AdminPelanggan() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menyimpan pelanggan:', error.response?.data || error);
 
@@ -225,7 +259,7 @@ export default function AdminPelanggan() {
                 isSuccess: true,
             });
 
-            await fetchData();
+            await fetchData(meta?.current_page || 1);
         } catch (error) {
             console.error('Gagal menghapus pelanggan:', error.response?.data || error);
 
@@ -240,32 +274,15 @@ export default function AdminPelanggan() {
         }
     };
 
-    const filteredData = useMemo(() => {
-        const keyword = searchTerm.trim().toLowerCase();
+    const filteredData = pelangganData;
 
-        let result = [...pelangganData];
+    const totalPelanggan =
+        statistik.total_pelanggan ?? meta?.total ?? filteredData.length;
 
-        if (keyword) {
-            result = result.filter((item) => {
-                const searchable = [
-                    item.idpel,
-                    item.unitup,
-                    item.nama_pelanggan,
-                    item.alamat_pelanggan,
-                    item.tarif,
-                    item.daya,
-                    item.tikor,
-                ]
-                    .filter(Boolean)
-                    .join(' ')
-                    .toLowerCase();
+    const totalFilter =
+        statistik.total_filter ?? meta?.total ?? filteredData.length;
 
-                return searchable.includes(keyword);
-            });
-        }
-
-        return result.sort((a, b) => Number(a.id) - Number(b.id));
-    }, [pelangganData, searchTerm]);
+    const jumlahDitampilkan = filteredData.length;
 
     const tarifOptions = useMemo(() => {
         const defaultTarif = [
@@ -276,13 +293,10 @@ export default function AdminPelanggan() {
             'S1', 'S2', 'S3',
         ];
 
-        const tarifDariData = pelangganData
-            .map((item) => item.tarif)
-            .filter(Boolean);
-
-        return [...new Set([...tarifDariData, ...defaultTarif])]
+        return [...new Set([...(filterOptions.tarif_options || []), ...defaultTarif])]
+            .filter(Boolean)
             .sort((a, b) => a.localeCompare(b));
-    }, [pelangganData]);
+    }, [filterOptions.tarif_options]);
 
     const unitupOptions = useMemo(() => {
         const defaultUnitup = [
@@ -295,13 +309,10 @@ export default function AdminPelanggan() {
             '14240',
         ];
 
-        const unitupDariData = pelangganData
-            .map((item) => item.unitup)
-            .filter(Boolean);
-
-        return [...new Set([...unitupDariData, ...defaultUnitup])]
+        return [...new Set([...(filterOptions.unitup_options || []), ...defaultUnitup])]
+            .filter(Boolean)
             .sort((a, b) => Number(a) - Number(b));
-    }, [pelangganData]);
+    }, [filterOptions.unitup_options]);
 
     return (
         <div className="min-vh-100 bg-light py-3 py-lg-4">
@@ -592,14 +603,21 @@ export default function AdminPelanggan() {
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
                                     <div className="small text-white-50">Total Pelanggan</div>
-                                    <div className="display-6 fw-bold mb-0">{pelangganData.length}</div>
+                                    <div className="display-6 fw-bold mb-0">{totalPelanggan}</div>
                                 </div>
                             </Col>
 
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Hasil Filter</div>
-                                    <div className="display-6 fw-bold mb-0">{filteredData.length}</div>
+                                    <div className="small text-white-50">Hasil Pencarian</div>
+                                    <div className="display-6 fw-bold mb-0">{totalFilter}</div>
+                                </div>
+                            </Col>
+
+                            <Col xs={6} md={3}>
+                                <div className="border-start border-light border-opacity-25 ps-3">
+                                    <div className="small text-white-50">Ditampilkan</div>
+                                    <div className="display-6 fw-bold mb-0">{jumlahDitampilkan}</div>
                                 </div>
                             </Col>
                         </Row>
@@ -638,7 +656,7 @@ export default function AdminPelanggan() {
                                 <Button
                                     variant="outline-secondary"
                                     className="w-100 rounded-pill fw-bold"
-                                    onClick={fetchData}
+                                    onClick={() => fetchData(1)}
                                     disabled={loading}
                                 >
                                     {loading ? 'Memuat...' : 'Refresh'}
@@ -649,25 +667,25 @@ export default function AdminPelanggan() {
                 </Card>
 
                 <Card className="border-0 shadow-sm rounded-4">
-                    <Card className="border-0 shadow-sm rounded-4">
-                        <Card.Body className="p-0">
-                            {loading ? (
-                                <div className="text-center py-5">
-                                    <Spinner animation="border" style={{ color: PLN_BLUE }} />
+                    <Card.Body className="p-0">
+                        {loading ? (
+                            <div className="text-center py-5">
+                                <Spinner animation="border" style={{ color: PLN_BLUE }} />
 
-                                    <div className="small text-muted mt-2">
-                                        Memuat data pelanggan...
-                                    </div>
+                                <div className="small text-muted mt-2">
+                                    Memuat data pelanggan...
                                 </div>
-                            ) : filteredData.length === 0 ? (
-                                <div className="text-center py-5">
-                                    <div className="fs-1 text-muted">—</div>
+                            </div>
+                        ) : filteredData.length === 0 ? (
+                            <div className="text-center py-5">
+                                <div className="fs-1 text-muted">—</div>
 
-                                    <div className="fw-bold text-muted">
-                                        Tidak ada pelanggan ditemukan.
-                                    </div>
+                                <div className="fw-bold text-muted">
+                                    Tidak ada pelanggan ditemukan.
                                 </div>
-                            ) : (
+                            </div>
+                        ) : (
+                            <>
                                 <div
                                     className="table-responsive"
                                     style={{
@@ -834,9 +852,35 @@ export default function AdminPelanggan() {
                                         </tbody>
                                     </Table>
                                 </div>
-                            )}
-                        </Card.Body>
-                    </Card>
+
+                                {meta && meta.last_page > 1 && (
+                                    <div className="d-flex justify-content-center align-items-center gap-2 p-3 border-top">
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page <= 1}
+                                            onClick={() => fetchData(meta.current_page - 1)}
+                                        >
+                                            Sebelumnya
+                                        </Button>
+
+                                        <Badge bg="light" text="dark" className="rounded-pill px-3 py-2 border">
+                                            Halaman {meta.current_page} / {meta.last_page}
+                                        </Badge>
+
+                                        <Button
+                                            variant="light"
+                                            className="rounded-pill fw-bold border shadow-sm px-4"
+                                            disabled={loading || meta.current_page >= meta.last_page}
+                                            onClick={() => fetchData(meta.current_page + 1)}
+                                        >
+                                            Berikutnya
+                                        </Button>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </Card.Body>
                 </Card>
             </Container>
         </div>

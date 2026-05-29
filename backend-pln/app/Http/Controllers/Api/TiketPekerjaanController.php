@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Api;
+
 use App\Http\Controllers\Controller;
 use App\Models\TiketPekerjaan;
 use App\Models\Petugas;
@@ -13,20 +14,114 @@ class TiketPekerjaanController extends Controller
     /**
      * Ambil semua tiket (untuk admin)
      */
-    public function index()
+    public function index(Request $request)
     {
-        $data = TiketPekerjaan::with([
-            'aset.pelanggan',
-            'tim',
-            'pekerjaan.petugas',
-            'pekerjaan.foto',
-        ])
-            ->orderBy('created_at', 'desc')
-            ->get();
+        $search = trim($request->query('search', ''));
+        $status = $request->query('status', 'semua');
+
+        $perPage = (int) $request->query('per_page', 10);
+        $perPage = $perPage > 25 ? 25 : $perPage;
+
+        $allowedStatuses = [
+            'tersedia',
+            'berjalan',
+            'dikerjakan',
+            'inReview',
+            'menungguValidasi',
+            'selesai',
+        ];
+
+        if ($status !== 'semua' && !in_array($status, $allowedStatuses)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Status tidak valid',
+            ], 422);
+        }
+
+        $query = TiketPekerjaan::query()
+            ->select([
+                'id',
+                'aset_id',
+                'nomor_tiket',
+                'tanggal_tiket',
+                'status',
+                'tim_id',
+                'created_at',
+                'updated_at',
+            ])
+            ->with([
+                'aset:id,pelanggan_id,nomor_kwh,merek_kwh,thtera_kwh',
+                'aset.pelanggan:id,unitup,idpel,nama_pelanggan,alamat_pelanggan,tarif,daya',
+                'tim:id,nama_tim',
+                'pekerjaan.petugas:id,nama_petugas',
+                'pekerjaan.tim:id,nama_tim',
+            ]);
+
+        if ($status !== 'semua') {
+            $query->where('status', $status);
+        }
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('nomor_tiket', 'like', "%{$search}%")
+                    ->orWhere('tanggal_tiket', 'like', "%{$search}%")
+                    ->orWhere('status', 'like', "%{$search}%")
+                    ->orWhereHas('tim', function ($timQuery) use ($search) {
+                        $timQuery->where('nama_tim', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('aset', function ($asetQuery) use ($search) {
+                        $asetQuery
+                            ->where('nomor_kwh', 'like', "%{$search}%")
+                            ->orWhere('merek_kwh', 'like', "%{$search}%")
+                            ->orWhere('thtera_kwh', 'like', "%{$search}%");
+                    })
+                    ->orWhereHas('aset.pelanggan', function ($pelangganQuery) use ($search) {
+                        $pelangganQuery
+                            ->where('idpel', 'like', "%{$search}%")
+                            ->orWhere('unitup', 'like', "%{$search}%")
+                            ->orWhere('nama_pelanggan', 'like', "%{$search}%")
+                            ->orWhere('alamat_pelanggan', 'like', "%{$search}%")
+                            ->orWhere('tarif', 'like', "%{$search}%")
+                            ->orWhere('daya', 'like', "%{$search}%");
+                    });
+            });
+        }
+
+        $data = $query
+            ->orderBy('id', 'asc')
+            ->paginate($perPage);
+
+        $statusCountsRaw = TiketPekerjaan::query()
+            ->select('status', DB::raw('COUNT(*) as total'))
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->toArray();
+
+        $statusCounts = [
+            'semua' => TiketPekerjaan::count(),
+            'tersedia' => (int) ($statusCountsRaw['tersedia'] ?? 0),
+            'berjalan' => (int) ($statusCountsRaw['berjalan'] ?? 0),
+            'dikerjakan' => (int) ($statusCountsRaw['dikerjakan'] ?? 0),
+            'inReview' => (int) ($statusCountsRaw['inReview'] ?? 0),
+            'menungguValidasi' => (int) ($statusCountsRaw['menungguValidasi'] ?? 0),
+            'selesai' => (int) ($statusCountsRaw['selesai'] ?? 0),
+        ];
 
         return response()->json([
             'success' => true,
-            'data' => $data
+            'data' => $data->items(),
+            'meta' => [
+                'current_page' => $data->currentPage(),
+                'last_page' => $data->lastPage(),
+                'per_page' => $data->perPage(),
+                'total' => $data->total(),
+                'has_more' => $data->hasMorePages(),
+            ],
+            'statistik' => [
+                'total_tiket' => TiketPekerjaan::count(),
+                'total_filter' => $data->total(),
+                'status_counts' => $statusCounts,
+            ],
         ]);
     }
 
@@ -331,62 +426,62 @@ class TiketPekerjaanController extends Controller
     }
 
     public function batalDikerjakan($id)
-{
-    DB::beginTransaction();
+    {
+        DB::beginTransaction();
 
-    try {
-        $tiket = TiketPekerjaan::find($id);
+        try {
+            $tiket = TiketPekerjaan::find($id);
 
-        if (!$tiket) {
-            DB::rollBack();
+            if (!$tiket) {
+                DB::rollBack();
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Tiket tidak ditemukan'
-            ], 404);
-        }
-
-        if (!in_array($tiket->status, ['berjalan', 'dikerjakan'])) {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Pengisian hanya bisa dibatalkan saat status berjalan atau dikerjakan.'
-            ], 422);
-        }
-
-        $pekerjaanList = PekerjaanPemeliharaan::with('foto')
-            ->where('tiket_id', $tiket->id)
-            ->get();
-
-        foreach ($pekerjaanList as $pekerjaan) {
-            if ($pekerjaan->foto) {
-                $pekerjaan->foto->delete();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tiket tidak ditemukan'
+                ], 404);
             }
 
-            $pekerjaan->delete();
+            if (!in_array($tiket->status, ['berjalan', 'dikerjakan'])) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Pengisian hanya bisa dibatalkan saat status berjalan atau dikerjakan.'
+                ], 422);
+            }
+
+            $pekerjaanList = PekerjaanPemeliharaan::with('foto')
+                ->where('tiket_id', $tiket->id)
+                ->get();
+
+            foreach ($pekerjaanList as $pekerjaan) {
+                if ($pekerjaan->foto) {
+                    $pekerjaan->foto->delete();
+                }
+
+                $pekerjaan->delete();
+            }
+
+            $tiket->update([
+                'status' => 'berjalan',
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pengisian dibatalkan. Data laporan sementara berhasil dihapus dan status tiket kembali berjalan.'
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membatalkan pengisian',
+                'error' => $e->getMessage(),
+            ], 500);
         }
-
-        $tiket->update([
-            'status' => 'berjalan',
-        ]);
-
-        DB::commit();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Pengisian dibatalkan. Data laporan sementara berhasil dihapus dan status tiket kembali berjalan.'
-        ]);
-    } catch (\Throwable $e) {
-        DB::rollBack();
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Gagal membatalkan pengisian',
-            'error' => $e->getMessage(),
-        ], 500);
     }
-}
 
     public function manajerIndex(Request $request)
     {
