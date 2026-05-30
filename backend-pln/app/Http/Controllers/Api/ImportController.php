@@ -284,8 +284,8 @@ public function aset(Request $request)
 
 public function tiket(Request $request)
 {
-    set_time_limit(300);
-    ini_set('memory_limit', '512M');
+    set_time_limit(600);
+    ini_set('memory_limit', '1024M');
 
     if (!$request->hasFile('file')) {
         return response()->json([
@@ -324,10 +324,20 @@ public function tiket(Request $request)
 
             $nomorKwh = trim((string) ($row[0] ?? ''));
             $idpel = trim((string) ($row[1] ?? ''));
-            $tanggal = $this->parseTanggalExcel($row[2] ?? null) ?: now()->toDateString();
+            $tanggal = $this->parseTanggalExcel($row[2] ?? null);
             $status = trim((string) ($row[3] ?? 'tersedia'));
 
             if ($nomorKwh === '' && $idpel === '') {
+                continue;
+            }
+
+            if (!$tanggal) {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'nomor_kwh' => $nomorKwh ?: null,
+                    'idpel' => $idpel ?: null,
+                    'alasan' => 'Tanggal tiket kosong atau format tanggal tidak valid',
+                ];
                 continue;
             }
 
@@ -409,9 +419,9 @@ public function tiket(Request $request)
             ->get()
             ->keyBy(fn ($tiket) => $tiket->aset_id . '|' . $tiket->tanggal_tiket);
 
-        DB::beginTransaction();
-
-        $sukses = 0;
+        $validRows = [];
+        $seenKeys = [];
+        $now = now();
 
         foreach ($dataImport as $item) {
             $aset = null;
@@ -448,6 +458,18 @@ public function tiket(Request $request)
 
             $key = $aset->id . '|' . $item['tanggal'];
 
+            if (isset($seenKeys[$key])) {
+                $gagal[] = [
+                    'baris' => $item['baris'],
+                    'nomor_kwh' => $item['nomor_kwh'] ?: null,
+                    'idpel' => $item['idpel'] ?: null,
+                    'alasan' => 'Duplikat aset dan tanggal tiket dalam file yang sama',
+                ];
+                continue;
+            }
+
+            $seenKeys[$key] = true;
+
             if ($existingTiketByKey->has($key)) {
                 $nomorTiket = $existingTiketByKey->get($key)->nomor_tiket;
             } else {
@@ -459,33 +481,38 @@ public function tiket(Request $request)
                 $nomorTiket = "PKJ-{$idpelTiket}-{$nextNumber}";
             }
 
-            $tiket = TiketPekerjaan::updateOrCreate(
-                [
-                    'aset_id' => $aset->id,
-                    'tanggal_tiket' => $item['tanggal'],
-                ],
-                [
-                    'nomor_tiket' => $nomorTiket,
-                    'status' => $item['status'],
-                ]
-            );
-
-            $existingTiketByKey->put($key, $tiket);
-
-            $sukses++;
+            $validRows[] = [
+                'aset_id' => $aset->id,
+                'nomor_tiket' => $nomorTiket,
+                'tanggal_tiket' => $item['tanggal'],
+                'status' => $item['status'],
+                'tim_id' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
         }
 
-        DB::commit();
+        foreach (array_chunk($validRows, 300) as $chunk) {
+            TiketPekerjaan::upsert(
+                $chunk,
+                ['nomor_tiket'],
+                [
+                    'aset_id',
+                    'tanggal_tiket',
+                    'status',
+                    'tim_id',
+                    'updated_at',
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Import tiket pekerjaan selesai',
-            'sukses' => $sukses,
+            'sukses' => count($validRows),
             'gagal' => $gagal,
         ]);
     } catch (\Throwable $e) {
-        DB::rollBack();
-
         return response()->json([
             'success' => false,
             'message' => 'Import tiket pekerjaan gagal',
