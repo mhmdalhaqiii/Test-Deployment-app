@@ -112,8 +112,8 @@ class ImportController extends Controller
 }
 public function aset(Request $request)
 {
-    set_time_limit(300);
-    ini_set('memory_limit', '512M');
+    set_time_limit(600);
+    ini_set('memory_limit', '1024M');
 
     if (!$request->hasFile('file')) {
         return response()->json([
@@ -133,8 +133,8 @@ public function aset(Request $request)
             ->getActiveSheet()
             ->toArray();
 
-        $dataImport = [];
         $idpelList = [];
+        $calonData = [];
         $gagal = [];
 
         foreach ($rows as $i => $row) {
@@ -146,14 +146,15 @@ public function aset(Request $request)
             $nomorKwh = trim((string) ($row[1] ?? ''));
             $merekKwh = trim((string) ($row[2] ?? ''));
             $thteraKwh = trim((string) ($row[3] ?? ''));
-            $faktorKaliDil = $row[4] ?? null;
+            $faktorKaliDil = trim((string) ($row[4] ?? ''));
             $tikorBaru = trim((string) ($row[5] ?? ''));
 
             if (
                 $idpel === '' &&
                 $nomorKwh === '' &&
                 $merekKwh === '' &&
-                $thteraKwh === ''
+                $thteraKwh === '' &&
+                $faktorKaliDil === ''
             ) {
                 continue;
             }
@@ -175,15 +176,45 @@ public function aset(Request $request)
                 continue;
             }
 
+            if ($merekKwh === '') {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'idpel' => $idpel,
+                    'nomor_kwh' => $nomorKwh,
+                    'alasan' => 'Merek kWh kosong',
+                ];
+                continue;
+            }
+
+            if ($thteraKwh === '' || !is_numeric($thteraKwh)) {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'idpel' => $idpel,
+                    'nomor_kwh' => $nomorKwh,
+                    'alasan' => 'Tahun tera kWh kosong atau bukan angka',
+                ];
+                continue;
+            }
+
+            if ($faktorKaliDil === '' || !is_numeric($faktorKaliDil)) {
+                $gagal[] = [
+                    'baris' => $i + 1,
+                    'idpel' => $idpel,
+                    'nomor_kwh' => $nomorKwh,
+                    'alasan' => 'Faktor kali DIL kosong atau bukan angka',
+                ];
+                continue;
+            }
+
             $idpelList[] = $idpel;
 
-            $dataImport[] = [
+            $calonData[] = [
                 'baris' => $i + 1,
                 'idpel' => $idpel,
                 'nomor_kwh' => $nomorKwh,
                 'merek_kwh' => strtoupper($merekKwh),
-                'thtera_kwh' => $thteraKwh,
-                'faktor_kali_dil' => is_numeric($faktorKaliDil) ? $faktorKaliDil : 0,
+                'thtera_kwh' => (int) $thteraKwh,
+                'faktor_kali_dil' => (float) $faktorKaliDil,
                 'tikor_baru' => $tikorBaru !== '' ? $tikorBaru : null,
             ];
         }
@@ -192,52 +223,59 @@ public function aset(Request $request)
             ->whereIn('idpel', array_unique($idpelList))
             ->pluck('id', 'idpel');
 
-        DB::beginTransaction();
+        $validRows = [];
+        $now = now();
 
-        $sukses = 0;
-
-        foreach ($dataImport as $item) {
+        foreach ($calonData as $item) {
             $pelangganId = $pelangganMap[$item['idpel']] ?? null;
 
             if (!$pelangganId) {
                 $gagal[] = [
                     'baris' => $item['baris'],
                     'idpel' => $item['idpel'],
+                    'nomor_kwh' => $item['nomor_kwh'],
                     'alasan' => 'Pelanggan tidak ditemukan',
                 ];
                 continue;
             }
 
-            AsetAppTr::updateOrCreate(
-                [
-                    'pelanggan_id' => $pelangganId,
-                ],
-                [
-                    'nomor_kwh' => $item['nomor_kwh'],
-                    'merek_kwh' => $item['merek_kwh'],
-                    'thtera_kwh' => $item['thtera_kwh'],
-                    'faktor_kali_dil' => $item['faktor_kali_dil'],
-                    'tikor_baru' => $item['tikor_baru'],
-                ]
-            );
-
-            $sukses++;
+            $validRows[] = [
+                'pelanggan_id' => $pelangganId,
+                'nomor_kwh' => $item['nomor_kwh'],
+                'merek_kwh' => $item['merek_kwh'],
+                'thtera_kwh' => $item['thtera_kwh'],
+                'faktor_kali_dil' => $item['faktor_kali_dil'],
+                'tikor_baru' => $item['tikor_baru'],
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
         }
 
-        DB::commit();
+        foreach (array_chunk($validRows, 300) as $chunk) {
+            AsetAppTr::upsert(
+                $chunk,
+                ['pelanggan_id'],
+                [
+                    'nomor_kwh',
+                    'merek_kwh',
+                    'thtera_kwh',
+                    'faktor_kali_dil',
+                    'tikor_baru',
+                    'updated_at',
+                ]
+            );
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Import aset selesai',
-            'sukses' => $sukses,
+            'sukses' => count($validRows),
             'gagal' => $gagal,
         ]);
     } catch (\Throwable $e) {
-        DB::rollBack();
-
         return response()->json([
             'success' => false,
-            'message' => 'Import aset gagal',
+            'message' => 'Import aset gagal membaca atau memproses file',
             'error' => $e->getMessage(),
             'line' => $e->getLine(),
         ], 500);
