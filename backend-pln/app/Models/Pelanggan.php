@@ -25,23 +25,19 @@ class Pelanggan extends Model
 
     public function getTarifScoreAttribute()
     {
-        $tarif = trim(strtoupper($this->tarif));
+        $tarif = strtoupper(trim($this->tarif));
 
-        return match (true){
-            str_starts_with($tarif, 'P3'),
-            str_starts_with($tarif, 'P1'),
-            str_starts_with($tarif, 'R3') => 5,
+        $mapping = [
+            'P3' => 1699.53,
+            'P1' => 1699.53,
+            'R3' => 1699.53,
+            'L'  => 1644.52,
+            'B2' => 1444.70,
+            'LB2' => 1444.70,
+            'I2' => 1444.70,
+            'S1' => 562,
+        ];
 
-            $tarif === 'L' => 4,
-
-            str_starts_with($tarif, 'B2'),
-            str_starts_with($tarif, 'LB2'),
-            str_starts_with($tarif, 'I2') => 3,
-
-            str_starts_with($tarif, 'S1') => 1,
-
-            default => 1,
-
-        };
+        return $mapping[$tarif] ?? 0;
     }
 }
