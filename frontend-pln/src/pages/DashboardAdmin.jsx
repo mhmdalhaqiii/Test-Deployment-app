@@ -20,6 +20,7 @@ const PLN_BLUE = '#0c2b4d';
 
 const STATUS_OPTIONS = [
     { key: 'inReview', label: 'Menunggu Review' },
+    { key: 'revisiAdmin', label: 'Perlu Revisi' },
     { key: 'menungguValidasi', label: 'Diteruskan ke Manajer' },
     { key: 'selesai', label: 'Selesai' },
 ];
@@ -29,6 +30,11 @@ const STATUS_META = {
         label: 'Menunggu Review Admin',
         badge: 'primary',
         border: 'primary',
+    },
+    revisiAdmin: {
+        label: 'Perlu Revisi Admin',
+        badge: 'danger',
+        border: 'danger',
     },
     menungguValidasi: {
         label: 'Menunggu Validasi Manajer',
@@ -232,15 +238,15 @@ function HeroPanel({
 
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Ke Manajer</div>
-                                    <div className="display-6 fw-bold mb-0">{statistik.menungguValidasi}</div>
+                                    <div className="small text-white-50">Revisi</div>
+                                    <div className="display-6 fw-bold mb-0">{statistik.revisiAdmin}</div>
                                 </div>
                             </Col>
 
                             <Col xs={6} md={3}>
                                 <div className="border-start border-light border-opacity-25 ps-3">
-                                    <div className="small text-white-50">Status</div>
-                                    <div className="h6 fw-bold mb-0 text-truncate">{activeStatusLabel}</div>
+                                    <div className="small text-white-50">Ke Manajer</div>
+                                    <div className="display-6 fw-bold mb-0">{statistik.menungguValidasi}</div>
                                 </div>
                             </Col>
                         </Row>
@@ -422,10 +428,12 @@ export default function DashboardAdmin() {
     const [serverStatistik, setServerStatistik] = useState({
         total: 0,
         inReview: 0,
+        revisiAdmin: 0,
         menungguValidasi: 0,
         selesai: 0,
         status_counts: {
             inReview: 0,
+            revisiAdmin: 0,
             menungguValidasi: 0,
             selesai: 0,
         },
@@ -461,10 +469,12 @@ export default function DashboardAdmin() {
             setServerStatistik(response.data.statistik || {
                 total: 0,
                 inReview: 0,
+                revisiAdmin: 0,
                 menungguValidasi: 0,
                 selesai: 0,
                 status_counts: {
                     inReview: 0,
+                    revisiAdmin: 0,
                     menungguValidasi: 0,
                     selesai: 0,
                 },
@@ -503,6 +513,7 @@ export default function DashboardAdmin() {
         return {
             total: serverStatistik.total || 0,
             inReview: serverStatistik.inReview || 0,
+            revisiAdmin: serverStatistik.revisiAdmin || 0,
             menungguValidasi: serverStatistik.menungguValidasi || 0,
             selesai: serverStatistik.selesai || 0,
         };
@@ -510,6 +521,7 @@ export default function DashboardAdmin() {
 
     const statusCounts = serverStatistik.status_counts || {
         inReview: 0,
+        revisiAdmin: 0,
         menungguValidasi: 0,
         selesai: 0,
     };
@@ -569,7 +581,7 @@ export default function DashboardAdmin() {
                                         <div className="fs-3 mb-2">📋</div>
                                         <h6 className="fw-bold mb-1">Review Laporan</h6>
                                         <p className="small text-muted mb-3">
-                                            Periksa laporan petugas dan teruskan ke manajer.
+                                            Periksa laporan petugas, revisi laporan yang dikembalikan manajer, lalu teruskan ke validasi akhir.
                                         </p>
                                         <Button
                                             size="sm"

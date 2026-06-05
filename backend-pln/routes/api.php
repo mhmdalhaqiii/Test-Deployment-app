@@ -66,6 +66,7 @@ Route::middleware(['auth:sanctum', 'role:petugas'])->group(function () {
     Route::get('/tiket-aktif-saya', [TiketPekerjaanController::class, 'pekerjaanAktif']);
 
     Route::get('/maps/aset-petugas', [AsetAppTrController::class, 'mapsPetugas']);
+    Route::get('/maps/cari-pelanggan', [AsetAppTrController::class, 'cariPelanggan']);
 
     Route::post('/tiket/ambil-pekerjaan', [TiketPekerjaanController::class, 'ambilPekerjaan']);
     Route::post('/tiket/{id}/mulai', [TiketPekerjaanController::class, 'mulaiDikerjakan']);
@@ -90,6 +91,7 @@ Route::middleware(['auth:sanctum', 'role:manajer'])->group(function () {
     Route::get('/manajer/pekerjaan', [TiketPekerjaanController::class, 'manajerIndex']);
     Route::get('/manajer/pekerjaan/{id}', [TiketPekerjaanController::class, 'manajerShow']);
     Route::post('/manajer/pekerjaan/{id}/validasi', [TiketPekerjaanController::class, 'validasiManajer']);
+    Route::post('/manajer/pekerjaan/{id}/kembalikan', [TiketPekerjaanController::class, 'kembalikanKeAdmin']);
 });
 
 

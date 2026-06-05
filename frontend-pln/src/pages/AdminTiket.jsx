@@ -24,6 +24,7 @@ const STATUS_OPTIONS = [
     { key: 'dikerjakan', label: 'Dikerjakan' },
     { key: 'inReview', label: 'Review Admin' },
     { key: 'menungguValidasi', label: 'Validasi' },
+    { key: 'revisiAdmin', label: 'Revisi Admin' },
     { key: 'selesai', label: 'Selesai' },
 ];
 
@@ -39,6 +40,8 @@ function getStatusInfo(status) {
             return { label: 'Review Admin', badge: 'primary' };
         case 'menungguValidasi':
             return { label: 'Validasi Manajer', badge: 'info', text: 'dark' };
+        case 'revisiAdmin':
+            return { label: 'Perlu Revisi Admin', badge: 'danger' };
         case 'selesai':
             return { label: 'Selesai', badge: 'success' };
         default:
@@ -116,6 +119,7 @@ export default function AdminTiket() {
             dikerjakan: 0,
             inReview: 0,
             menungguValidasi: 0,
+            revisiAdmin: 0,
             selesai: 0,
         },
     });
@@ -174,6 +178,7 @@ export default function AdminTiket() {
                     dikerjakan: 0,
                     inReview: 0,
                     menungguValidasi: 0,
+                    revisiAdmin: 0,
                     selesai: 0,
                 },
             });
@@ -389,6 +394,7 @@ export default function AdminTiket() {
         dikerjakan: statusCounts.dikerjakan || 0,
         inReview: statusCounts.inReview || 0,
         menungguValidasi: statusCounts.menungguValidasi || 0,
+        revisiAdmin: statusCounts.revisiAdmin || 0,
         selesai: statusCounts.selesai || 0,
     };
 
@@ -588,6 +594,7 @@ export default function AdminTiket() {
                                         <option value="dikerjakan">Dikerjakan</option>
                                         <option value="inReview">Review Admin</option>
                                         <option value="menungguValidasi">Validasi Manajer</option>
+                                        <option value="revisiAdmin">Perlu Revisi Admin</option>
                                         <option value="selesai">Selesai</option>
                                     </Form.Select>
 
@@ -734,6 +741,13 @@ export default function AdminTiket() {
                                 <div className="border-start border-light border-opacity-25 ps-3">
                                     <div className="small text-white-50">Review</div>
                                     <div className="display-6 fw-bold mb-0">{statistik.inReview}</div>
+                                </div>
+                            </Col>
+
+                            <Col xs={6} md={3} xl>
+                                <div className="border-start border-light border-opacity-25 ps-3">
+                                    <div className="small text-white-50">Revisi</div>
+                                    <div className="display-6 fw-bold mb-0">{statistik.revisiAdmin}</div>
                                 </div>
                             </Col>
 

@@ -83,104 +83,202 @@ class AsetAppTrController extends Controller
     }
 
     public function mapsPetugas(Request $request)
-    {
-        $minLat = (float) $request->query('minLat');
-        $maxLat = (float) $request->query('maxLat');
-        $minLng = (float) $request->query('minLng');
-        $maxLng = (float) $request->query('maxLng');
+{
+    $minLat = (float) $request->query('minLat');
+    $maxLat = (float) $request->query('maxLat');
+    $minLng = (float) $request->query('minLng');
+    $maxLng = (float) $request->query('maxLng');
 
-        $limit = (int) $request->query('limit', 200);
-        $limit = $limit > 300 ? 300 : $limit;
+    $limit = (int) $request->query('limit', 200);
+    $limit = $limit > 300 ? 300 : $limit;
 
-        if (!$minLat || !$maxLat || !$minLng || !$maxLng) {
-            return response()->json([
-                'success' => true,
-                'data' => [],
-            ]);
-        }
-
-        $asets = AsetAppTr::query()
-            ->select([
-                'id',
-                'pelanggan_id',
-                'nomor_kwh',
-                'merek_kwh',
-                'thtera_kwh',
-                'tikor_baru',
-            ])
-            ->with([
-                'pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan,tikor',
-            ])
-            ->withExists([
-                'tiket as sudah_selesai' => function ($query) {
-                    $query->where('status', 'selesai');
-                },
-            ])
-            ->where(function ($query) {
-                $query
-                    ->whereNotNull('tikor_baru')
-                    ->orWhereHas('pelanggan', function ($q) {
-                        $q->whereNotNull('tikor');
-                    });
-            })
-            ->get();
-
-        $data = [];
-
-        foreach ($asets as $aset) {
-            $tikor = $aset->tikor_baru ?: optional($aset->pelanggan)->tikor;
-
-            if (!$tikor || !str_contains($tikor, ',')) {
-                continue;
-            }
-
-            $parts = explode(',', $tikor);
-
-            if (count($parts) !== 2) {
-                continue;
-            }
-
-            $lat = (float) trim($parts[0]);
-            $lng = (float) trim($parts[1]);
-
-            if (!$lat || !$lng) {
-                continue;
-            }
-
-            if (
-                $lat < $minLat ||
-                $lat > $maxLat ||
-                $lng < $minLng ||
-                $lng > $maxLng
-            ) {
-                continue;
-            }
-
-            $data[] = [
-                'id' => $aset->id,
-                'nomor_kwh' => $aset->nomor_kwh,
-                'merek_kwh' => $aset->merek_kwh,
-                'thtera_kwh' => $aset->thtera_kwh,
-                'lat' => $lat,
-                'lng' => $lng,
-                'status_pekerjaan' => $aset->sudah_selesai ? 'selesai' : 'belum',
-                'pelanggan' => [
-                    'idpel' => $aset->pelanggan?->idpel,
-                    'nama_pelanggan' => $aset->pelanggan?->nama_pelanggan,
-                    'alamat_pelanggan' => $aset->pelanggan?->alamat_pelanggan,
-                ],
-            ];
-
-            if (count($data) >= $limit) {
-                break;
-            }
-        }
-
+    if (!$minLat || !$maxLat || !$minLng || !$maxLng) {
         return response()->json([
             'success' => true,
-            'data' => $data,
+            'data' => [],
         ]);
     }
+
+    $asets = AsetAppTr::query()
+        ->select([
+            'id',
+            'pelanggan_id',
+            'nomor_kwh',
+            'merek_kwh',
+            'thtera_kwh',
+            'tikor_baru',
+        ])
+        ->with([
+            'pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan,tikor',
+            'tiket' => function ($query) {
+                $query
+                    ->select('id', 'aset_id', 'status', 'updated_at')
+                    ->latest('updated_at');
+            },
+        ])
+        ->where(function ($query) {
+            $query
+                ->whereNotNull('tikor_baru')
+                ->orWhereHas('pelanggan', function ($q) {
+                    $q->whereNotNull('tikor');
+                });
+        })
+        ->get();
+
+    $data = [];
+
+    foreach ($asets as $aset) {
+        $tikor = $aset->tikor_baru ?: optional($aset->pelanggan)->tikor;
+
+        if (!$tikor || !str_contains($tikor, ',')) {
+            continue;
+        }
+
+        $parts = explode(',', $tikor);
+
+        if (count($parts) !== 2) {
+            continue;
+        }
+
+        $lat = (float) trim($parts[0]);
+        $lng = (float) trim($parts[1]);
+
+        if (!$lat || !$lng) {
+            continue;
+        }
+
+        if (
+            $lat < $minLat ||
+            $lat > $maxLat ||
+            $lng < $minLng ||
+            $lng > $maxLng
+        ) {
+            continue;
+        }
+
+        $latestTiket = $aset->tiket->first();
+        $statusPekerjaan = $latestTiket?->status ?? 'tersedia';
+
+        $data[] = [
+            'id' => $aset->id,
+            'nomor_kwh' => $aset->nomor_kwh,
+            'merek_kwh' => $aset->merek_kwh,
+            'thtera_kwh' => $aset->thtera_kwh,
+            'lat' => $lat,
+            'lng' => $lng,
+            'status_pekerjaan' => $statusPekerjaan,
+            'pelanggan' => [
+                'idpel' => $aset->pelanggan?->idpel,
+                'nama_pelanggan' => $aset->pelanggan?->nama_pelanggan,
+                'alamat_pelanggan' => $aset->pelanggan?->alamat_pelanggan,
+            ],
+        ];
+
+        if (count($data) >= $limit) {
+            break;
+        }
+    }
+
+    return response()->json([
+        'success' => true,
+        'data' => $data,
+    ]);
+}
+
+    public function cariPelanggan(Request $request)
+{
+    $search = trim($request->query('search', ''));
+
+    $limit = (int) $request->query('limit', 10);
+    $limit = $limit > 20 ? 20 : $limit;
+
+    if (strlen($search) < 3) {
+        return response()->json([
+            'success' => true,
+            'data' => [],
+            'message' => 'Masukkan minimal 3 karakter pencarian.',
+        ]);
+    }
+
+    $asets = AsetAppTr::query()
+        ->select([
+            'id',
+            'pelanggan_id',
+            'nomor_kwh',
+            'merek_kwh',
+            'thtera_kwh',
+            'tikor_baru',
+        ])
+        ->with([
+            'pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan,tikor',
+            'tiket' => function ($query) {
+                $query
+                    ->select('id', 'aset_id', 'status', 'updated_at')
+                    ->latest('updated_at');
+            },
+        ])
+        ->where(function ($query) use ($search) {
+            $query
+                ->where('nomor_kwh', 'like', "%{$search}%")
+                ->orWhereHas('pelanggan', function ($q) use ($search) {
+                    $q->where('nama_pelanggan', 'like', "%{$search}%")
+                        ->orWhere('idpel', 'like', "%{$search}%")
+                        ->orWhere('alamat_pelanggan', 'like', "%{$search}%");
+                });
+        })
+        ->limit(50)
+        ->get();
+
+    $data = [];
+
+    foreach ($asets as $aset) {
+        $tikor = $aset->tikor_baru ?: optional($aset->pelanggan)->tikor;
+
+        if (!$tikor || !str_contains($tikor, ',')) {
+            continue;
+        }
+
+        $parts = explode(',', $tikor);
+
+        if (count($parts) !== 2) {
+            continue;
+        }
+
+        $lat = (float) trim($parts[0]);
+        $lng = (float) trim($parts[1]);
+
+        if (!$lat || !$lng) {
+            continue;
+        }
+
+        $latestTiket = $aset->tiket->first();
+        $statusPekerjaan = $latestTiket?->status ?? 'tersedia';
+
+        $data[] = [
+            'id' => $aset->id,
+            'nomor_kwh' => $aset->nomor_kwh,
+            'merek_kwh' => $aset->merek_kwh,
+            'thtera_kwh' => $aset->thtera_kwh,
+            'lat' => $lat,
+            'lng' => $lng,
+            'status_pekerjaan' => $statusPekerjaan,
+            'pelanggan' => [
+                'idpel' => $aset->pelanggan?->idpel,
+                'nama_pelanggan' => $aset->pelanggan?->nama_pelanggan,
+                'alamat_pelanggan' => $aset->pelanggan?->alamat_pelanggan,
+            ],
+        ];
+
+        if (count($data) >= $limit) {
+            break;
+        }
+    }
+
+    return response()->json([
+        'success' => true,
+        'data' => $data,
+    ]);
+}
 
 
     public function store(Request $request)

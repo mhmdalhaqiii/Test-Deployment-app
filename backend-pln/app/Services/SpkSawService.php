@@ -48,7 +48,6 @@ class SpkSawService
                 $skorTotal += ($nilaiNormalisasi * $this->bobot[$key]);
             }
 
-            // 👇 INI KUNCINYA: Variabel dipatenkan jadi skor_saw biar React gak error
             $item['skor_saw'] = round($skorTotal, 4);
         }
 

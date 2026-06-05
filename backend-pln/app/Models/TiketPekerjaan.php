@@ -13,6 +13,7 @@ class TiketPekerjaan extends Model
         'nomor_tiket',
         'tanggal_tiket',
         'status',
+        'catatan_validasi',
         'tim_id'
     ];
 

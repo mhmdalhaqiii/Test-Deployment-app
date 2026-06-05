@@ -142,6 +142,9 @@ function getStatusInfo(status) {
         case 'menungguValidasi':
             return { label: 'Menunggu Validasi Manajer', badge: 'info', text: 'dark' };
 
+        case 'revisiAdmin':
+            return { label: 'Perlu Revisi Admin', badge: 'danger', text: undefined };
+
         case 'selesai':
             return { label: 'Selesai', badge: 'success', text: undefined };
 
@@ -388,6 +391,7 @@ export default function DetailReviewAdmin() {
     const pelanggan = aset?.pelanggan;
     const foto = pekerjaan?.foto;
     const statusInfo = getStatusInfo(tiket?.status);
+    const canAdminEdit = ['inReview', 'revisiAdmin'].includes(tiket?.status);
 
     return (
         <div className="min-vh-100 bg-light">
@@ -467,8 +471,8 @@ export default function DetailReviewAdmin() {
                         ))}
 
                         <Alert variant="warning" className="rounded-4 mb-0">
-                            Perubahan ini hanya bisa dilakukan selama status masih <strong>Menunggu Review Admin</strong>.
-                            Setelah diteruskan ke manajer, data tidak bisa diedit dari halaman ini.
+                            Perubahan ini bisa dilakukan selama status masih <strong>Menunggu Review Admin</strong> atau <strong>Perlu Revisi Admin</strong>.
+                            Setelah diteruskan ke manajer, data tidak bisa diedit sampai manajer mengembalikan laporan lagi.
                         </Alert>
                     </Modal.Body>
 
@@ -543,7 +547,7 @@ export default function DetailReviewAdmin() {
                         </div>
 
                         <div className="d-flex gap-2">
-                            {tiket?.status === 'inReview' && (
+                            {canAdminEdit && (
                                 <Button
                                     variant="warning"
                                     className="rounded-pill fw-bold px-3"
@@ -599,7 +603,18 @@ export default function DetailReviewAdmin() {
                 </Container>
             </div>
 
+
             <Container style={{ maxWidth: 1180, marginTop: -36, paddingBottom: 50 }}>
+                {tiket?.catatan_validasi && (
+                    <SectionCard
+                        title="Catatan dari Manajer"
+                        subtitle="Catatan ini menjadi acuan admin untuk memperbaiki laporan."
+                    >
+                        <Alert variant="danger" className="rounded-4 mb-0">
+                            {tiket.catatan_validasi}
+                        </Alert>
+                    </SectionCard>
+                )}
                 <SectionCard
                     title="Informasi Pelanggan & Tiket"
                     subtitle="Data pelanggan, aset APP TR, dan tiket pekerjaan."
@@ -794,10 +809,12 @@ export default function DetailReviewAdmin() {
                     title="Aksi Review Admin"
                     subtitle="Jika laporan sudah benar, teruskan pekerjaan ke manajer untuk validasi akhir."
                 >
-                    {tiket?.status === 'inReview' ? (
+                    {canAdminEdit ? (
                         <div className="d-grid d-md-flex justify-content-md-between align-items-md-center gap-3">
-                            <Alert variant="primary" className="mb-0 rounded-4 flex-grow-1">
-                                Laporan ini sedang menunggu review admin. Pastikan data dan foto sudah diperiksa sebelum diteruskan.
+                            <Alert variant={tiket?.status === 'revisiAdmin' ? 'danger' : 'primary'} className="mb-0 rounded-4 flex-grow-1">
+                                {tiket?.status === 'revisiAdmin'
+                                    ? 'Laporan ini dikembalikan oleh manajer. Periksa catatan manajer, lakukan perbaikan, lalu teruskan ulang ke manajer.'
+                                    : 'Laporan ini sedang menunggu review admin. Pastikan data dan foto sudah diperiksa sebelum diteruskan.'}
                             </Alert>
 
                             <Button

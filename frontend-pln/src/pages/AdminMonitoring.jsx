@@ -24,6 +24,7 @@ const STATUS_OPTIONS = [
     { key: 'dikerjakan', label: 'Dikerjakan' },
     { key: 'inReview', label: 'Review Admin' },
     { key: 'menungguValidasi', label: 'Validasi Manajer' },
+    { key: 'revisiAdmin', label: 'Revisi Admin' },
     { key: 'selesai', label: 'Selesai' },
 ];
 
@@ -43,6 +44,9 @@ function getStatusInfo(status) {
 
         case 'menungguValidasi':
             return { label: 'Validasi Manajer', badge: 'info', text: 'dark' };
+
+        case 'revisiAdmin':
+            return { label: 'Perlu Revisi Admin', badge: 'danger' };
 
         case 'selesai':
             return { label: 'Selesai', badge: 'success' };
@@ -118,6 +122,7 @@ export default function AdminMonitoring() {
             dikerjakan: 0,
             inReview: 0,
             menungguValidasi: 0,
+            revisiAdmin: 0,
             selesai: 0,
         },
     });
@@ -155,6 +160,7 @@ export default function AdminMonitoring() {
                     dikerjakan: 0,
                     inReview: 0,
                     menungguValidasi: 0,
+                    revisiAdmin: 0,
                     selesai: 0,
                 },
             });
@@ -189,6 +195,7 @@ export default function AdminMonitoring() {
         dikerjakan: statusCounts.dikerjakan || 0,
         inReview: statusCounts.inReview || 0,
         menungguValidasi: statusCounts.menungguValidasi || 0,
+        revisiAdmin: statusCounts.revisiAdmin || 0,
         selesai: totalSelesai,
         progress: totalSemua > 0 ? Math.round((totalSelesai / totalSemua) * 100) : 0,
     };
@@ -278,6 +285,13 @@ export default function AdminMonitoring() {
                                 <div className="border-start border-light border-opacity-25 ps-3">
                                     <div className="small text-white-50">Review</div>
                                     <div className="display-6 fw-bold mb-0">{statistik.inReview}</div>
+                                </div>
+                            </Col>
+
+                            <Col xs={6} md={3} lg>
+                                <div className="border-start border-light border-opacity-25 ps-3">
+                                    <div className="small text-white-50">Revisi</div>
+                                    <div className="display-6 fw-bold mb-0">{statistik.revisiAdmin}</div>
                                 </div>
                             </Col>
 
@@ -374,7 +388,6 @@ export default function AdminMonitoring() {
                 </Card>
 
                 <Card className="border-0 shadow-sm rounded-4">
-                    <Card className="border-0 shadow-sm rounded-4">
                         <Card.Body className="p-0">
                             {loading ? (
                                 <div className="text-center py-5">
@@ -539,7 +552,7 @@ export default function AdminMonitoring() {
                                                                     boxShadow: '-8px 0 14px rgba(15, 23, 42, 0.04)',
                                                                 }}
                                                             >
-                                                                {item.status === 'inReview' && pekerjaan?.id ? (
+                                                                {['inReview', 'revisiAdmin'].includes(item.status) && pekerjaan?.id ? (
                                                                     <Button
                                                                         size="sm"
                                                                         className="rounded-pill fw-bold px-3"
@@ -549,7 +562,7 @@ export default function AdminMonitoring() {
                                                                         }}
                                                                         onClick={() => navigate(`/admin/review/${pekerjaan.id}`)}
                                                                     >
-                                                                        Review
+                                                                        {item.status === 'revisiAdmin' ? 'Revisi' : 'Review'}
                                                                     </Button>
                                                                 ) : (
                                                                     <Button
@@ -598,7 +611,6 @@ export default function AdminMonitoring() {
                             )}
                         </Card.Body>
                     </Card>
-                </Card>
             </Container>
         </div>
     );

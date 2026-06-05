@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
     Alert,
@@ -7,6 +7,7 @@ import {
     Card,
     Col,
     Container,
+    Form,
     Modal,
     Row,
     Spinner,
@@ -39,12 +40,62 @@ const FOTO_FIELDS = [
     { key: 'foto_tegangan_kwh_t', label: 'Tegangan kWh T' },
 ];
 
+const InfoItem = ({ label, value }) => (
+    <Col xs={12} md={6} lg={4}>
+        <div className="bg-light rounded-4 p-3 h-100">
+            <div className="small text-muted fw-bold mb-1">{label}</div>
+            <div className="fw-semibold text-dark">{value || '-'}</div>
+        </div>
+    </Col>
+);
+
+const SectionCard = ({ title, subtitle, children }) => (
+    <Card className="border-0 shadow-sm rounded-4 mb-4">
+        <Card.Body className="p-3 p-md-4">
+            <div className="mb-3">
+                <h5 className="fw-bold mb-1" style={{ color: PLN_BLUE }}>
+                    {title}
+                </h5>
+                {subtitle && (
+                    <div className="small text-muted">
+                        {subtitle}
+                    </div>
+                )}
+            </div>
+
+            {children}
+        </Card.Body>
+    </Card>
+);
+
+const SimpleTable = ({ rows }) => (
+    <div className="table-responsive">
+        <Table bordered hover className="align-middle mb-0">
+            <tbody>
+                {rows.map((row) => (
+                    <tr key={row.label}>
+                        <td className="fw-bold text-muted small bg-light" style={{ width: '45%' }}>
+                            {row.label}
+                        </td>
+                        <td className="fw-semibold">
+                            {row.value ?? '-'}
+                        </td>
+                    </tr>
+                ))}
+            </tbody>
+        </Table>
+    </div>
+);
+
 export default function DetailPekerjaanManajer() {
     const { id } = useParams();
     const navigate = useNavigate();
 
     const [loading, setLoading] = useState(true);
     const [validating, setValidating] = useState(false);
+    const [returning, setReturning] = useState(false);
+    const [showReturnModal, setShowReturnModal] = useState(false);
+    const [catatanValidasi, setCatatanValidasi] = useState('');
     const [tiket, setTiket] = useState(null);
 
     const [modalNotif, setModalNotif] = useState({
@@ -54,12 +105,7 @@ export default function DetailPekerjaanManajer() {
         isSuccess: true,
     });
 
-    useEffect(() => {
-        fetchDetail();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id]);
-
-    const fetchDetail = async () => {
+    const fetchDetail = useCallback(async () => {
         try {
             setLoading(true);
 
@@ -79,7 +125,11 @@ export default function DetailPekerjaanManajer() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [id]);
+
+    useEffect(() => {
+        fetchDetail();
+    }, [fetchDetail]);
 
     const handleValidasi = async () => {
         try {
@@ -109,6 +159,51 @@ export default function DetailPekerjaanManajer() {
         }
     };
 
+    const handleKembalikanKeAdmin = async (event) => {
+        event.preventDefault();
+
+        if (!catatanValidasi.trim()) {
+            setModalNotif({
+                show: true,
+                title: 'Catatan Wajib Diisi',
+                message: 'Isi catatan kesalahan terlebih dahulu sebelum mengembalikan laporan ke admin.',
+                isSuccess: false,
+            });
+            return;
+        }
+
+        try {
+            setReturning(true);
+
+            await api.post(`/manajer/pekerjaan/${id}/kembalikan`, {
+                catatan_validasi: catatanValidasi,
+            });
+
+            setShowReturnModal(false);
+            setCatatanValidasi('');
+
+            setModalNotif({
+                show: true,
+                title: 'Dikembalikan ke Admin',
+                message: 'Pekerjaan berhasil dikembalikan ke admin untuk diperbaiki.',
+                isSuccess: true,
+            });
+
+            await fetchDetail();
+        } catch (error) {
+            console.error('Gagal mengembalikan pekerjaan:', error.response?.data || error);
+
+            setModalNotif({
+                show: true,
+                title: 'Gagal Mengembalikan',
+                message: error.response?.data?.message || 'Pekerjaan belum bisa dikembalikan ke admin.',
+                isSuccess: false,
+            });
+        } finally {
+            setReturning(false);
+        }
+    };
+
     const getStatusInfo = (status) => {
         switch (status) {
             case 'berjalan':
@@ -119,6 +214,8 @@ export default function DetailPekerjaanManajer() {
                 return { label: 'Menunggu Review Admin', badge: 'primary' };
             case 'menungguValidasi':
                 return { label: 'Menunggu Validasi Manajer', badge: 'info', text: 'dark' };
+            case 'revisiAdmin':
+                return { label: 'Perlu Revisi Admin', badge: 'danger' };
             case 'selesai':
                 return { label: 'Selesai', badge: 'success' };
             default:
@@ -171,52 +268,7 @@ export default function DetailPekerjaanManajer() {
         return `https://drive.google.com/file/d/${fileId}/view`;
     };
 
-    const InfoItem = ({ label, value }) => (
-        <Col xs={12} md={6} lg={4}>
-            <div className="bg-light rounded-4 p-3 h-100">
-                <div className="small text-muted fw-bold mb-1">{label}</div>
-                <div className="fw-semibold text-dark">{value || '-'}</div>
-            </div>
-        </Col>
-    );
 
-    const SectionCard = ({ title, subtitle, children }) => (
-        <Card className="border-0 shadow-sm rounded-4 mb-4">
-            <Card.Body className="p-3 p-md-4">
-                <div className="mb-3">
-                    <h5 className="fw-bold mb-1" style={{ color: PLN_BLUE }}>
-                        {title}
-                    </h5>
-                    {subtitle && (
-                        <div className="small text-muted">
-                            {subtitle}
-                        </div>
-                    )}
-                </div>
-
-                {children}
-            </Card.Body>
-        </Card>
-    );
-
-    const SimpleTable = ({ rows }) => (
-        <div className="table-responsive">
-            <Table bordered hover className="align-middle mb-0">
-                <tbody>
-                    {rows.map((row) => (
-                        <tr key={row.label}>
-                            <td className="fw-bold text-muted small bg-light" style={{ width: '45%' }}>
-                                {row.label}
-                            </td>
-                            <td className="fw-semibold">
-                                {row.value ?? '-'}
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </Table>
-        </div>
-    );
 
     if (loading) {
         return (
@@ -263,6 +315,67 @@ export default function DetailPekerjaanManajer() {
                 </Modal.Body>
             </Modal>
 
+            <Modal
+                show={showReturnModal}
+                onHide={() => setShowReturnModal(false)}
+                centered
+            >
+                <Form onSubmit={handleKembalikanKeAdmin}>
+                    <Modal.Header closeButton>
+                        <Modal.Title className="fw-bold" style={{ color: PLN_BLUE }}>
+                            Kembalikan ke Admin
+                        </Modal.Title>
+                    </Modal.Header>
+
+                    <Modal.Body>
+                        <Alert variant="warning" className="rounded-4">
+                            Tuliskan bagian yang masih salah agar admin bisa memperbaiki laporan sebelum dikirim ulang ke manajer.
+                        </Alert>
+
+                        <Form.Group>
+                            <Form.Label className="fw-semibold">
+                                Catatan Kesalahan
+                            </Form.Label>
+
+                            <Form.Control
+                                as="textarea"
+                                rows={4}
+                                value={catatanValidasi}
+                                onChange={(event) => setCatatanValidasi(event.target.value)}
+                                placeholder="Contoh: Faktor kali real belum sesuai, tikor baru belum diisi, atau data pengukuran perlu dicek ulang."
+                            />
+                        </Form.Group>
+                    </Modal.Body>
+
+                    <Modal.Footer>
+                        <Button
+                            variant="light"
+                            className="rounded-pill fw-bold px-4 border"
+                            onClick={() => setShowReturnModal(false)}
+                            disabled={returning}
+                        >
+                            Batal
+                        </Button>
+
+                        <Button
+                            type="submit"
+                            variant="danger"
+                            className="rounded-pill fw-bold px-4"
+                            disabled={returning}
+                        >
+                            {returning ? (
+                                <>
+                                    <Spinner animation="border" size="sm" className="me-2" />
+                                    Mengembalikan...
+                                </>
+                            ) : (
+                                'Kembalikan'
+                            )}
+                        </Button>
+                    </Modal.Footer>
+                </Form>
+            </Modal>
+
             <div
                 className="text-white pb-5"
                 style={{
@@ -291,7 +404,7 @@ export default function DetailPekerjaanManajer() {
 
                             <div>
                                 <div className="small opacity-75 fw-bold">
-                                    Detail Pekerjaan 
+                                    Detail Pekerjaan
                                 </div>
 
                                 <h3 className="fw-bold mb-1">
@@ -540,6 +653,17 @@ export default function DetailPekerjaanManajer() {
                             </Row>
                         </SectionCard>
 
+                        {tiket?.catatan_validasi && (
+                            <SectionCard
+                                title="Catatan Validasi Manajer"
+                                subtitle="Catatan ini berisi alasan pengembalian laporan ke admin."
+                            >
+                                <Alert variant="warning" className="rounded-4 mb-0">
+                                    {tiket.catatan_validasi}
+                                </Alert>
+                            </SectionCard>
+                        )}
+
                         <SectionCard
                             title="Validasi Manajer"
                             subtitle="Validasi akhir hanya bisa dilakukan jika status berada pada tahap menunggu validasi."
@@ -550,22 +674,34 @@ export default function DetailPekerjaanManajer() {
                                         Pekerjaan ini sudah direview admin dan siap divalidasi manajer.
                                     </Alert>
 
-                                    <Button
-                                        size="lg"
-                                        className="rounded-pill fw-bold px-4"
-                                        style={{ backgroundColor: PLN_BLUE, border: 'none' }}
-                                        onClick={handleValidasi}
-                                        disabled={validating}
-                                    >
-                                        {validating ? (
-                                            <>
-                                                <Spinner animation="border" size="sm" className="me-2" />
-                                                Memvalidasi...
-                                            </>
-                                        ) : (
-                                            'Validasi Selesai'
-                                        )}
-                                    </Button>
+                                    <div className="d-grid d-md-flex gap-2">
+                                        <Button
+                                            size="lg"
+                                            variant="danger"
+                                            className="rounded-pill fw-bold px-4"
+                                            onClick={() => setShowReturnModal(true)}
+                                            disabled={validating || returning}
+                                        >
+                                            Kembalikan ke Admin
+                                        </Button>
+
+                                        <Button
+                                            size="lg"
+                                            className="rounded-pill fw-bold px-4"
+                                            style={{ backgroundColor: PLN_BLUE, border: 'none' }}
+                                            onClick={handleValidasi}
+                                            disabled={validating || returning}
+                                        >
+                                            {validating ? (
+                                                <>
+                                                    <Spinner animation="border" size="sm" className="me-2" />
+                                                    Memvalidasi...
+                                                </>
+                                            ) : (
+                                                'Validasi Selesai'
+                                            )}
+                                        </Button>
+                                    </div>
                                 </div>
                             ) : (
                                 <Alert variant="light" className="mb-0 rounded-4 border">

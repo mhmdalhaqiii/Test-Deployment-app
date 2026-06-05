@@ -369,9 +369,11 @@ class PekerjaanPemeliharaanController extends Controller
             $pekerjaan = PekerjaanPemeliharaan::with('tiket')
                 ->findOrFail($id);
 
-            if ($pekerjaan->tiket->status !== 'inReview') {
+            if (!in_array($pekerjaan->tiket->status, ['inReview', 'revisiAdmin'])) {
+                DB::rollBack();
+
                 return response()->json([
-                    'message' => 'Pekerjaan belum berada pada tahap review admin'
+                    'message' => 'Pekerjaan belum berada pada tahap review admin atau revisi admin.'
                 ], 422);
             }
 
@@ -440,6 +442,7 @@ class PekerjaanPemeliharaanController extends Controller
         $allowedStatuses = [
             'inReview',
             'menungguValidasi',
+            'revisiAdmin',
             'selesai'
         ];
 
@@ -500,6 +503,7 @@ class PekerjaanPemeliharaanController extends Controller
         $statusCounts = [
             'inReview' => (int) ($statusCountsRaw['inReview'] ?? 0),
             'menungguValidasi' => (int) ($statusCountsRaw['menungguValidasi'] ?? 0),
+            'revisiAdmin' => (int) ($statusCountsRaw['revisiAdmin'] ?? 0),
             'selesai' => (int) ($statusCountsRaw['selesai'] ?? 0),
         ];
 
@@ -521,7 +525,7 @@ class PekerjaanPemeliharaanController extends Controller
                 'updated_at',
             ])
             ->with([
-                'tiket:id,aset_id,nomor_tiket,status',
+                'tiket:id,aset_id,nomor_tiket,status,catatan_validasi',
                 'tiket.aset:id,pelanggan_id',
                 'tiket.aset.pelanggan:id,idpel,nama_pelanggan,alamat_pelanggan',
                 'petugas:id,nama_petugas',
@@ -544,10 +548,12 @@ class PekerjaanPemeliharaanController extends Controller
                 'total' => $data->total(),
                 'has_more' => $data->hasMorePages(),
             ],
+
             'statistik' => [
                 'total' => array_sum($statusCounts),
                 'inReview' => $statusCounts['inReview'],
                 'menungguValidasi' => $statusCounts['menungguValidasi'],
+                'revisiAdmin' => $statusCounts['revisiAdmin'],
                 'selesai' => $statusCounts['selesai'],
                 'status_counts' => $statusCounts,
             ],
@@ -573,10 +579,10 @@ class PekerjaanPemeliharaanController extends Controller
     {
         $pekerjaan = PekerjaanPemeliharaan::with('tiket')->findOrFail($id);
 
-        if (!$pekerjaan->tiket || $pekerjaan->tiket->status !== 'inReview') {
+        if (!$pekerjaan->tiket || !in_array($pekerjaan->tiket->status, ['inReview', 'revisiAdmin'])) {
             return response()->json([
                 'success' => false,
-                'message' => 'Data hanya bisa diedit saat status masih inReview.'
+                'message' => 'Data hanya bisa diedit saat status masih inReview atau revisiAdmin.'
             ], 422);
         }
 

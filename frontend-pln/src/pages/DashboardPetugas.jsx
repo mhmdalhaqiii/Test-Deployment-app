@@ -1,13 +1,12 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Badge, Spinner, Button, Modal, Offcanvas, Alert } from 'react-bootstrap';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import api from '../services/api';
 
-// Pembeda Warna Pin Aset
-const assetIcon = new L.Icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+const createAssetIcon = (color) => new L.Icon({
+    iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
     iconSize: [12, 20],
     iconAnchor: [6, 20],
@@ -15,15 +14,87 @@ const assetIcon = new L.Icon({
     shadowSize: [20, 20]
 });
 
-// Pembeda Warna Pin Aset Selesai
-const assetIconSelesai = new L.Icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-    iconSize: [12, 20],
-    iconAnchor: [6, 20],
-    popupAnchor: [1, -20],
-    shadowSize: [20, 20]
-});
+// Icon aset default 
+const STATUS_MARKER_ICONS = {
+    tersedia: createAssetIcon('blue'),
+    berjalan: createAssetIcon('gold'),
+    dikerjakan: createAssetIcon('orange'),
+    inReview: createAssetIcon('violet'),
+    menungguValidasi: createAssetIcon('yellow'),
+    revisiAdmin: createAssetIcon('red'),
+    selesai: createAssetIcon('green'),
+    belum: createAssetIcon('blue'),
+    default: createAssetIcon('grey'),
+};
+
+function getAsetMapStatusInfo(status) {
+    switch (status) {
+        case 'tersedia':
+            return {
+                label: 'Tersedia',
+                badge: 'primary',
+                icon: STATUS_MARKER_ICONS.tersedia,
+            };
+
+        case 'berjalan':
+            return {
+                label: 'Berjalan',
+                badge: 'dark',
+                icon: STATUS_MARKER_ICONS.berjalan,
+            };
+
+        case 'dikerjakan':
+            return {
+                label: 'Dikerjakan',
+                badge: 'warning',
+                text: 'dark',
+                icon: STATUS_MARKER_ICONS.dikerjakan,
+            };
+
+        case 'inReview':
+            return {
+                label: 'Review Admin',
+                badge: 'primary',
+                icon: STATUS_MARKER_ICONS.inReview,
+            };
+
+        case 'menungguValidasi':
+            return {
+                label: 'Validasi Manajer',
+                badge: 'info',
+                text: 'dark',
+                icon: STATUS_MARKER_ICONS.menungguValidasi,
+            };
+
+        case 'revisiAdmin':
+            return {
+                label: 'Perlu Revisi Admin',
+                badge: 'danger',
+                icon: STATUS_MARKER_ICONS.revisiAdmin,
+            };
+
+        case 'selesai':
+            return {
+                label: 'Selesai',
+                badge: 'success',
+                icon: STATUS_MARKER_ICONS.selesai,
+            };
+
+        case 'belum':
+            return {
+                label: 'Belum Dikerjakan',
+                badge: 'secondary',
+                icon: STATUS_MARKER_ICONS.belum,
+            };
+
+        default:
+            return {
+                label: status || 'Belum Ada Status',
+                badge: 'secondary',
+                icon: STATUS_MARKER_ICONS.default,
+            };
+    }
+}
 
 // Pin target petugas
 const targetIcon = new L.Icon({
@@ -36,14 +107,14 @@ const targetIcon = new L.Icon({
 });
 
 // Komponen untuk loncat titik peta pertama kali
-function ChangeMapView({ coords }) {
+function ChangeMapView({ coords, zoom = 13 }) {
     const map = useMap();
 
     useEffect(() => {
         if (coords) {
-            map.setView(coords, 13);
+            map.setView(coords, zoom);
         }
-    }, [coords, map]);
+    }, [coords, zoom, map]);
 
     return null;
 }
@@ -92,6 +163,13 @@ export default function DashboardPetugas() {
     const [spkData, setSpkData] = useState([]);
     const [pekerjaanDiambil, setPekerjaanDiambil] = useState([]);
     const [riwayatData, setRiwayatData] = useState([]);
+    const [searchMap, setSearchMap] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [loadingSearchMap, setLoadingSearchMap] = useState(false);
+    const [showSearchResults, setShowSearchResults] = useState(false);
+    const [focusZoom, setFocusZoom] = useState(13);
+
+    const searchTimerRef = useRef(null);
 
     // State UI
     const [loadingAset, setLoadingAset] = useState(true);
@@ -119,6 +197,7 @@ export default function DashboardPetugas() {
     // Default Center UP3 Palembang
     const defaultCenter = [-2.9909, 104.7566];
     const [lokasiTarget, setLokasiTarget] = useState(defaultCenter);
+    const [mapFocusCoords, setMapFocusCoords] = useState(defaultCenter);
     const [mapZoom, setMapZoom] = useState(13);
     const [mapBounds, setMapBounds] = useState(null);
 
@@ -196,18 +275,23 @@ export default function DashboardPetugas() {
     };
 
     useEffect(() => {
-        fetchPekerjaanAktif();
+        const timer = setTimeout(() => {
+            fetchPekerjaanAktif();
+        }, 0);
 
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
                 (position) => {
-                    setLokasiTarget([position.coords.latitude, position.coords.longitude]);
+                    const userCoords = [position.coords.latitude, position.coords.longitude];
+
+                    setLokasiTarget(userCoords);
+                    setMapFocusCoords(userCoords);
                 },
                 (error) => console.log("Gagal akses GPS, pakai default Palembang", error)
             );
         }
 
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        return () => clearTimeout(timer);
     }, []);
 
     // Pin target bisa digeser
@@ -441,11 +525,85 @@ export default function DashboardPetugas() {
         return () => clearTimeout(timer);
     }, [mapBounds, mapZoom, fetchAsetMap]);
 
+    useEffect(() => {
+        return () => {
+            if (searchTimerRef.current) {
+                clearTimeout(searchTimerRef.current);
+            }
+        };
+    }, []);
+
     const asetTampilDiMap = useMemo(() => {
         return semuaAset;
     }, [semuaAset]);
 
     const markerBelumMuncul = !loadingAset && mapZoom < MIN_ZOOM_MARKER;
+
+    const handleSearchMapChange = (event) => {
+        const value = event.target.value;
+        setSearchMap(value);
+
+        const keyword = value.trim();
+
+        if (searchTimerRef.current) {
+            clearTimeout(searchTimerRef.current);
+        }
+
+        if (keyword.length < 3) {
+            setSearchResults([]);
+            setShowSearchResults(false);
+            setLoadingSearchMap(false);
+            return;
+        }
+
+        setLoadingSearchMap(true);
+
+        searchTimerRef.current = setTimeout(async () => {
+            try {
+                const response = await api.get('/maps/cari-pelanggan', {
+                    params: {
+                        search: keyword,
+                        limit: 10,
+                    },
+                });
+
+                const data = response.data.data || [];
+
+                setSearchResults(Array.isArray(data) ? data : []);
+                setShowSearchResults(true);
+            } catch (error) {
+                console.error('Gagal mencari pelanggan:', error.response?.data || error);
+
+                setSearchResults([]);
+                setShowSearchResults(false);
+            } finally {
+                setLoadingSearchMap(false);
+            }
+        }, 500);
+    };
+
+    const handlePilihHasilSearch = (aset) => {
+        const lat = Number(aset.lat);
+        const lng = Number(aset.lng);
+
+        if (Number.isNaN(lat) || Number.isNaN(lng)) {
+            setModalNotif({
+                show: true,
+                title: 'Koordinat Tidak Valid',
+                message: 'Data koordinat pelanggan ini tidak bisa dibaca.',
+                isSuccess: false,
+            });
+
+            return;
+        }
+
+        setMapFocusCoords([lat, lng]);
+        setFocusZoom(17);
+
+        setSearchMap(aset.pelanggan?.nama_pelanggan || '');
+        setSearchResults([]);
+        setShowSearchResults(false);
+    };
 
     return (
         <div style={{ position: 'relative', height: '100dvh', width: '100vw', overflow: 'hidden' }}>
@@ -482,7 +640,7 @@ export default function DashboardPetugas() {
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1 }}>
                 <MapContainer center={defaultCenter} zoom={13} style={{ height: '100%', width: '100%' }} zoomControl={false}>
                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                    <ChangeMapView coords={lokasiTarget} />
+                    <ChangeMapView coords={mapFocusCoords} zoom={focusZoom} />
                     <MapTracker onChange={handleMapChange} />
 
                     {/* PIN ASET */}
@@ -491,8 +649,9 @@ export default function DashboardPetugas() {
 
                         if (isNaN(coords[0]) || isNaN(coords[1])) return null;
 
-                        const isSelesai = aset.status_pekerjaan === 'selesai';
-                        const iconDipakai = isSelesai ? assetIconSelesai : assetIcon;
+                        const statusPekerjaan = aset.status_pekerjaan || aset.status || 'tersedia';
+                        const statusInfoMap = getAsetMapStatusInfo(statusPekerjaan);
+                        const iconDipakai = statusInfoMap.icon;
 
                         return (
                             <Marker key={aset.id} position={coords} icon={iconDipakai}>
@@ -504,8 +663,13 @@ export default function DashboardPetugas() {
                                         <br />
                                         Merk: {aset.merek_kwh || aset.merk_meter || '-'}
                                         <br />
-                                        Status: <Badge bg={isSelesai ? 'success' : 'secondary'} className="mt-1">
-                                            {isSelesai ? 'Selesai' : 'Belum'}
+                                        Status:{' '}
+                                        <Badge
+                                            bg={statusInfoMap.badge}
+                                            text={statusInfoMap.text}
+                                            className="mt-1"
+                                        >
+                                            {statusInfoMap.label}
                                         </Badge>
                                     </div>
                                 </Popup>
@@ -531,22 +695,303 @@ export default function DashboardPetugas() {
                 </MapContainer>
             </div>
 
-            {/* HEADER FLOATING */}
-            <div style={{ position: 'absolute', top: '15px', left: '15px', right: '15px', zIndex: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="bg-white px-3 py-2 shadow-sm rounded-pill d-flex align-items-center">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/9/97/Logo_PLN.png" alt="PLN" width="20" className="me-2" />
-                    <span className="fw-bold text-dark" style={{ fontSize: '0.9rem' }}>
-                        UP3 Palembang
-                    </span>
+            {/* HEADER FLOATING FINAL */}
+            <div
+                style={{
+                    position: 'absolute',
+                    top: '12px',
+                    left: '12px',
+                    right: '12px',
+                    zIndex: 12,
+                }}
+            >
+                {/* DESKTOP / TABLET */}
+                <div
+                    className="d-none d-md-block"
+                    style={{
+                        position: 'relative',
+                        height: '42px',
+                    }}
+                >
+                    {/* LOGO DESKTOP */}
+                    <div
+                        className="bg-white px-3 py-2 shadow-sm rounded-pill d-flex align-items-center"
+                        style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 0,
+                            width: 'fit-content',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '210px',
+                        }}
+                    >
+                        <img
+                            src="https://upload.wikimedia.org/wikipedia/commons/9/97/Logo_PLN.png"
+                            alt="PLN"
+                            width="20"
+                            className="me-2 flex-shrink-0"
+                        />
+
+                        <span
+                            className="fw-bold text-dark text-truncate"
+                            style={{ fontSize: '0.9rem' }}
+                        >
+                            UP3 Palembang
+                        </span>
+                    </div>
+
+                    {/* SEARCH DESKTOP */}
+                    <div
+                        className="bg-white rounded-pill shadow-sm position-absolute"
+                        style={{
+                            top: 0,
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            width: '520px',
+                            maxWidth: '42vw',
+                        }}
+                    >
+                        <div className="d-flex align-items-center gap-2 px-2">
+                            <span className="ps-1">🔎</span>
+
+                            <input
+                                type="text"
+                                value={searchMap}
+                                onChange={handleSearchMapChange}
+                                placeholder="Cari pelanggan..."
+                                className="form-control border-0 shadow-none"
+                                style={{
+                                    fontSize: '0.85rem',
+                                    height: '40px',
+                                    backgroundColor: 'transparent',
+                                    minWidth: 0,
+                                }}
+                            />
+
+                            {loadingSearchMap && (
+                                <Spinner animation="border" size="sm" className="me-2" />
+                            )}
+
+                            {searchMap && !loadingSearchMap && (
+                                <Button
+                                    variant="light"
+                                    size="sm"
+                                    className="rounded-circle d-flex align-items-center justify-content-center"
+                                    style={{
+                                        width: 28,
+                                        height: 28,
+                                        padding: 0,
+                                        flexShrink: 0,
+                                    }}
+                                    onClick={() => {
+                                        setSearchMap('');
+                                        setSearchResults([]);
+                                        setShowSearchResults(false);
+                                    }}
+                                >
+                                    ×
+                                </Button>
+                            )}
+                        </div>
+
+                        {showSearchResults && (
+                            <div
+                                className="bg-white rounded-4 shadow border mt-2 p-2 position-absolute"
+                                style={{
+                                    top: '100%',
+                                    left: 0,
+                                    right: 0,
+                                    maxHeight: '180px',
+                                    overflowY: 'auto',
+                                    zIndex: 30,
+                                }}
+                            >
+                                {searchResults.length === 0 ? (
+                                    <div className="text-muted small text-center py-3">
+                                        Pelanggan tidak ditemukan.
+                                    </div>
+                                ) : (
+                                    searchResults.map((aset) => (
+                                        <button
+                                            key={aset.id}
+                                            type="button"
+                                            className="btn btn-light w-100 text-start rounded-4 mb-2"
+                                            onClick={() => handlePilihHasilSearch(aset)}
+                                        >
+                                            <div
+                                                className="fw-bold small text-truncate"
+                                                style={{ color: '#0c2b4d' }}
+                                            >
+                                                {aset.pelanggan?.nama_pelanggan || 'Tanpa Nama'}
+                                            </div>
+                                            <div
+                                                className="small text-truncate"
+                                                style={{ color: '#0c2b4d' }}
+                                            >
+                                                {aset.pelanggan?.idpel || 'Tanpa IDPEL'}
+                                            </div>
+
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* AVATAR DESKTOP */}
+                    <div
+                        className="d-flex align-items-center gap-2"
+                        style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: 0,
+                        }}
+                    >
+                        {loadingAset && (
+                            <Badge bg="info" className="shadow-sm d-none d-lg-inline-flex">
+                                Memuat Aset...
+                            </Badge>
+                        )}
+
+                        <div
+                            style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                backgroundColor: '#0c2b4d',
+                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 'bold',
+                                boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
+                                flexShrink: 0,
+                            }}
+                        >
+                            {user?.name ? user.name.charAt(0).toUpperCase() : 'P'}
+                        </div>
+                    </div>
                 </div>
 
-                <div className="d-flex align-items-center gap-2">
-                    {loadingAset && (
-                        <Badge bg="info" className="shadow-sm">
-                            Memuat Aset...
-                        </Badge>
-                    )}
+                {/* MOBILE */}
+                <div
+                    className="d-md-none"
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: '44px minmax(0, 1fr) 40px',
+                        columnGap: '8px',
+                        alignItems: 'center',
+                    }}
+                >
+                    {/* LOGO MOBILE COMPACT */}
+                    <div
+                        className="bg-white shadow-sm rounded-pill d-flex align-items-center justify-content-center"
+                        style={{
+                            width: '44px',
+                            height: '40px',
+                        }}
+                    >
+                        <img
+                            src="https://upload.wikimedia.org/wikipedia/commons/9/97/Logo_PLN.png"
+                            alt="PLN"
+                            width="21"
+                        />
+                    </div>
 
+                    {/* SEARCH MOBILE */}
+                    <div
+                        className="bg-white rounded-pill shadow-sm position-relative"
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                        }}
+                    >
+                        <div className="d-flex align-items-center gap-1 px-2">
+                            <span style={{ fontSize: '0.85rem' }}>🔎</span>
+
+                            <input
+                                type="text"
+                                value={searchMap}
+                                onChange={handleSearchMapChange}
+                                placeholder="Cari..."
+                                className="form-control border-0 shadow-none"
+                                style={{
+                                    fontSize: '0.82rem',
+                                    height: '40px',
+                                    backgroundColor: 'transparent',
+                                    minWidth: 0,
+                                }}
+                            />
+
+                            {loadingSearchMap && (
+                                <Spinner animation="border" size="sm" />
+                            )}
+
+                            {searchMap && !loadingSearchMap && (
+                                <Button
+                                    variant="light"
+                                    size="sm"
+                                    className="rounded-circle d-flex align-items-center justify-content-center"
+                                    style={{
+                                        width: 26,
+                                        height: 26,
+                                        padding: 0,
+                                        flexShrink: 0,
+                                    }}
+                                    onClick={() => {
+                                        setSearchMap('');
+                                        setSearchResults([]);
+                                        setShowSearchResults(false);
+                                    }}
+                                >
+                                </Button>
+                            )}
+                        </div>
+
+                        {showSearchResults && (
+                            <div
+                                className="bg-white rounded-4 shadow border mt-2 p-2 position-absolute"
+                                style={{
+                                    top: '100%',
+                                    left: 0,
+                                    right: 0,
+                                    maxHeight: '180px',
+                                    overflowY: 'auto',
+                                    zIndex: 30,
+                                }}
+                            >
+                                {searchResults.length === 0 ? (
+                                    <div className="text-muted small text-center py-3">
+                                        Pelanggan tidak ditemukan.
+                                    </div>
+                                ) : (
+                                    searchResults.map((aset) => (
+                                        <button
+                                            key={aset.id}
+                                            type="button"
+                                            className="btn btn-light w-100 text-start rounded-4 mb-2"
+                                            onClick={() => handlePilihHasilSearch(aset)}
+                                        >
+                                            <div
+                                                className="fw-bold small text-truncate"
+                                                style={{ color: '#0c2b4d' }}
+                                            >
+                                                {aset.pelanggan?.nama_pelanggan || 'Tanpa Nama'}
+                                            </div>
+                                            <div
+                                                className="small text-truncate"
+                                                style={{ color: '#0c2b4d' }}
+                                            >
+                                                {aset.pelanggan?.idpel || 'Tanpa IDPEL'}
+                                            </div>
+                                        </button>
+                                    ))
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* AVATAR MOBILE */}
                     <div
                         style={{
                             width: '40px',
@@ -558,7 +1003,8 @@ export default function DashboardPetugas() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             fontWeight: 'bold',
-                            boxShadow: '0 4px 10px rgba(0,0,0,0.2)'
+                            boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
+                            flexShrink: 0,
                         }}
                     >
                         {user?.name ? user.name.charAt(0).toUpperCase() : 'P'}
@@ -567,7 +1013,17 @@ export default function DashboardPetugas() {
             </div>
 
             {/* ALERT PETUNJUK GESER PIN */}
-            <div style={{ position: 'absolute', top: '70px', left: '50%', transform: 'translateX(-50%)', zIndex: 10, width: '90%', maxWidth: '350px' }}>
+            <div
+                style={{
+                    position: 'absolute',
+                    top: '70px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: 10,
+                    width: '90%',
+                    maxWidth: '350px',
+                }}
+            >
                 <Alert
                     variant="warning"
                     className="py-2 px-3 shadow-sm rounded-pill text-center border-0"

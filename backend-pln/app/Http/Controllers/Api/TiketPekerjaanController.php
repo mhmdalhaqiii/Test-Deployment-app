@@ -28,6 +28,7 @@ class TiketPekerjaanController extends Controller
             'dikerjakan',
             'inReview',
             'menungguValidasi',
+            'revisiAdmin',
             'selesai',
         ];
 
@@ -104,6 +105,7 @@ class TiketPekerjaanController extends Controller
             'dikerjakan' => (int) ($statusCountsRaw['dikerjakan'] ?? 0),
             'inReview' => (int) ($statusCountsRaw['inReview'] ?? 0),
             'menungguValidasi' => (int) ($statusCountsRaw['menungguValidasi'] ?? 0),
+            'revisiAdmin' => (int) ($statusCountsRaw['revisiAdmin'] ?? 0),
             'selesai' => (int) ($statusCountsRaw['selesai'] ?? 0),
         ];
 
@@ -134,7 +136,7 @@ class TiketPekerjaanController extends Controller
             'aset_id' => 'required|exists:aset_app_tr,id',
             'nomor_tiket' => 'required|unique:tiket_pekerjaan,nomor_tiket',
             'tanggal_tiket' => 'required|date',
-            'status' => 'required|in:tersedia,berjalan,dikerjakan,inReview,menungguValidasi,selesai',
+            'status' => 'required|in:tersedia,berjalan,dikerjakan,inReview,menungguValidasi,revisiAdmin,selesai',
             'tim_id' => 'nullable|exists:tim,id',
         ]);
 
@@ -398,7 +400,7 @@ class TiketPekerjaanController extends Controller
             'aset_id' => 'required|exists:aset_app_tr,id',
             'nomor_tiket' => 'required|unique:tiket_pekerjaan,nomor_tiket,' . $id,
             'tanggal_tiket' => 'required|date',
-            'status' => 'required|in:tersedia,berjalan,dikerjakan,inReview,menungguValidasi,selesai',
+            'status' => 'required|in:tersedia,berjalan,dikerjakan,inReview,menungguValidasi,revisiAdmin,selesai',
             'tim_id' => 'nullable|exists:tim,id',
         ]);
 
@@ -496,6 +498,7 @@ class TiketPekerjaanController extends Controller
             'dikerjakan',
             'inReview',
             'menungguValidasi',
+            'revisiAdmin',
             'selesai'
         ];
 
@@ -554,6 +557,7 @@ class TiketPekerjaanController extends Controller
             'dikerjakan' => (int) ($statusCountsRaw['dikerjakan'] ?? 0),
             'inReview' => (int) ($statusCountsRaw['inReview'] ?? 0),
             'menungguValidasi' => (int) ($statusCountsRaw['menungguValidasi'] ?? 0),
+            'revisiAdmin' => (int) ($statusCountsRaw['revisiAdmin'] ?? 0),
             'selesai' => (int) ($statusCountsRaw['selesai'] ?? 0),
         ];
 
@@ -573,6 +577,7 @@ class TiketPekerjaanController extends Controller
                 'nomor_tiket',
                 'tanggal_tiket',
                 'status',
+                'catatan_validasi',
                 'tim_id',
                 'updated_at',
             ])
@@ -608,6 +613,7 @@ class TiketPekerjaanController extends Controller
                 'dikerjakan' => $statusCounts['dikerjakan'],
                 'inReview' => $statusCounts['inReview'],
                 'menungguValidasi' => $statusCounts['menungguValidasi'],
+                'revisiAdmin' => $statusCounts['revisiAdmin'],
                 'selesai' => $statusCounts['selesai'],
                 'status_counts' => $statusCounts,
             ],
@@ -621,6 +627,7 @@ class TiketPekerjaanController extends Controller
             'dikerjakan',
             'inReview',
             'menungguValidasi',
+            'revisiAdmin',
             'selesai'
         ];
 
@@ -690,6 +697,73 @@ class TiketPekerjaanController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Gagal memvalidasi pekerjaan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function kembalikanKeAdmin(Request $request, $id)
+    {
+        $request->validate([
+            'catatan_validasi' => 'required|string|min:5|max:3000',
+        ], [
+            'catatan_validasi.required' => 'Catatan revisi wajib diisi.',
+            'catatan_validasi.min' => 'Catatan revisi minimal 5 karakter.',
+        ]);
+
+        DB::beginTransaction();
+
+        try {
+            $tiket = TiketPekerjaan::with([
+                'aset.pelanggan',
+                'tim',
+                'pekerjaan.petugas',
+                'pekerjaan.tim',
+                'pekerjaan.foto',
+            ])->findOrFail($id);
+
+            if ($tiket->status !== 'menungguValidasi') {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tiket hanya bisa dikembalikan saat berada pada tahap validasi manajer.'
+                ], 422);
+            }
+
+            if (!$tiket->pekerjaan) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Data laporan pekerjaan belum ditemukan.'
+                ], 422);
+            }
+
+            $tiket->update([
+                'status' => 'revisiAdmin',
+                'catatan_validasi' => $request->catatan_validasi,
+            ]);
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pekerjaan berhasil dikembalikan ke admin untuk direvisi.',
+                'data' => $tiket->fresh([
+                    'aset.pelanggan',
+                    'tim',
+                    'pekerjaan.petugas',
+                    'pekerjaan.tim',
+                    'pekerjaan.foto',
+                ])
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengembalikan pekerjaan ke admin.',
                 'error' => $e->getMessage()
             ], 500);
         }

@@ -24,6 +24,7 @@ const STATUS_OPTIONS = [
     { key: 'dikerjakan', label: 'Dikerjakan' },
     { key: 'inReview', label: 'Review Admin' },
     { key: 'menungguValidasi', label: 'Validasi' },
+    { key: 'revisiAdmin', label: 'Revisi Admin' },
     { key: 'selesai', label: 'Selesai' },
 ];
 
@@ -47,6 +48,11 @@ const STATUS_META = {
         label: 'Menunggu Validasi',
         badge: 'info',
         border: 'info',
+    },
+    revisiAdmin: {
+        label: 'Perlu Revisi Admin',
+        badge: 'danger',
+        border: 'danger',
     },
     selesai: {
         label: 'Selesai',
@@ -451,6 +457,7 @@ export default function DashboardManajer() {
         dikerjakan: 0,
         inReview: 0,
         menungguValidasi: 0,
+        revisiAdmin: 0,
         selesai: 0,
         status_counts: {
             semua: 0,
@@ -458,6 +465,7 @@ export default function DashboardManajer() {
             dikerjakan: 0,
             inReview: 0,
             menungguValidasi: 0,
+            revisiAdmin: 0,
             selesai: 0,
         },
     });

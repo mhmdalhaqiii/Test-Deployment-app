@@ -102,8 +102,6 @@ class PerhitunganPekerjaanService
 
         // =========================
         // ERROR CT TOTAL
-        // Khusus total pakai arus sekunder METER
-        // agar hasil contoh menjadi -0,58%
         // =========================
         $errorCtTotal = $safeDiv(
             (($arusSekunderMeterTotal * $faktorKaliReal) - $arusPrimerTotal),
