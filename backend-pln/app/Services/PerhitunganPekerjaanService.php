@@ -83,7 +83,6 @@ class PerhitunganPekerjaanService
 
         // =========================
         // ERROR CT PER FASA
-        // Tetap pakai arus sekunder UKUR
         // =========================
         $errorCtR = $safeDiv(
             (($arusSekunderRUkur * $faktorKaliDil) - $arusPrimerR),
